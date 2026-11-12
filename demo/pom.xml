@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>org.refkv</groupId>
+  <artifactId>refkv-bdv-demo</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <name>refkv BigDataViewer demo</name>
+  <description>Opens a vzip archive of a foreign image file in BigDataViewer</description>
+
+  <licenses>
+    <license>
+      <name>BSD-3-Clause</name>
+      <url>https://opensource.org/license/bsd-3-clause</url>
+      <distribution>repo</distribution>
+    </license>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <repositories>
+    <repository>
+      <id>scijava.public</id>
+      <url>https://maven.scijava.org/content/groups/public</url>
+    </repository>
+  </repositories>
+
+  <!-- bigdataviewer-core 10.6.13 is built against imglib2 8.1.0, and the bindings against n5 4.0.2: say so,
+       rather than let Maven pick the nearest of each -->
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>net.imglib2</groupId>
+        <artifactId>imglib2</artifactId>
+        <version>8.1.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.janelia.saalfeldlab</groupId>
+        <artifactId>n5</artifactId>
+        <version>4.0.2</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.refkv</groupId>
+      <artifactId>refkv-javacpp</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.janelia.saalfeldlab</groupId>
+      <artifactId>n5-zarr</artifactId>
+      <version>2.0.2</version>
+    </dependency>
+    <dependency>
+      <groupId>org.janelia.saalfeldlab</groupId>
+      <artifactId>n5-imglib2</artifactId>
+      <version>8.0.1</version>
+    </dependency>
+    <dependency>
+      <groupId>sc.fiji</groupId>
+      <artifactId>bigdataviewer-core</artifactId>
+      <version>10.6.13</version>
+    </dependency>
+    <dependency>
+      <groupId>sc.fiji</groupId>
+      <artifactId>bigdataviewer-vistools</artifactId>
+      <version>1.0.0-beta-36</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- `mvn exec:exec` runs the demo on the module's classpath, whatever the system: see the demo task in pixi.toml -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

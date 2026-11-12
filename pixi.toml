@@ -2,7 +2,7 @@
 authors = ["Mark Kittisopikul <kittisopikulm@janelia.hhmi.org>"]
 channels = ["conda-forge"]
 name = "refkv-javacpp"
-platforms = ["osx-arm64"]
+platforms = ["osx-arm64", "win-64"]
 version = "0.1.0"
 
 [tasks]
@@ -13,6 +13,10 @@ capi-test = { cmd = "cargo test --release --manifest-path capi/Cargo.toml", desc
 java-gen = { cmd = "mkdir -p target/presets && javac -cp target/deps/javacpp-1.5.14.jar -d target/presets src/main/java/org/refkv/javacpp/RefkvPresets.java && java -jar target/deps/javacpp-1.5.14.jar -nocompile -cp target/presets -d src/main/java -Dplatform.includepath=$PWD/../capi/include org.refkv.javacpp.RefkvPresets", cwd = "java", depends-on = ["capi", "java-deps"], description = "Regenerate the raw JavaCPP bindings from the header" }
 java-deps = { cmd = "mvn -q -B dependency:copy-dependencies -DoutputDirectory=target/deps", cwd = "java" }
 java-build = { cmd = "mvn -B -q package -DskipTests", cwd = "java", depends-on = ["capi"], description = "Compile the bindings and build the JNI library" }
+# the BigDataViewer demo: `pixi run demo` opens the demo image; options go in one quoted argument, for example
+# `pixi run demo "--check"`, `pixi run demo "--preview docs/preview.png"`, or `pixi run demo "path/or/url/of/an/image --out my.vzip"`
+demo-install = { cmd = "mvn -B -q -f java/pom.xml install -DskipTests", depends-on = ["capi"], description = "Install the bindings where the demo finds them" }
+demo = { cmd = "mvn -B -q -f demo/pom.xml exec:exec -Dexec.executable=java -Dexec.args=\"--enable-native-access=ALL-UNNAMED -cp %classpath org.refkv.demo.BdvDemo {{ options }}\"", args = [{ arg = "options", default = "" }], depends-on = ["demo-install"], description = "Open an image in BigDataViewer through a refkv vzip archive" }
 test = { cmd = "mvn -B test", cwd = "java", depends-on = ["capi"], description = "Run the Java tests" }
 
 [dependencies]

@@ -127,6 +127,47 @@ headers are never read), so parsing the container is a small part of the reader.
 macOS arm64 only so far (`pixi.toml`'s `platforms`); the C ABI is portable, but only that platform is built and tested.
 refkv itself is a proof of concept with no stability promise before 1.0.
 
+## Demo: BigDataViewer
+
+`demo/` opens an image in [BigDataViewer](https://imagej.net/plugins/bdv/) through a vzip archive: refkv zarrifies a file in
+a foreign format, N5 reads the archive as a Zarr dataset, and BigDataViewer asks N5 for blocks, which are read from the
+original file, over HTTP, as the viewer needs them. The default image is a 3-channel yeast z-stack from the
+[Image Data Resource](https://idr.openmicroscopy.org/) (idr0011, CC BY 4.0, Zeiss CZI, 44 MB at the EBI), one of the examples
+of the [refkv demo](https://d-v-b.github.io/refkv-demo/image-to-zarr/).
+
+```sh
+pixi run demo                                         # the image above, in BigDataViewer
+pixi run demo "https://example.org/volume.vzip"       # an archive: a path or a URL
+pixi run demo "/data/image.nii --files-below /data"   # a local file, zarrified first; --files-below lets the archive read it
+pixi run demo "--check"                               # no window: zarrify, read a block, and wait for one volatile voxel
+pixi run demo "--preview docs/preview.png"            # no window: composite the middle plane of every channel into a PNG
+```
+
+What happens on the default image: zarrify reads about 250 KB of the file, in 12 requests and about 4 seconds, and writes an
+archive of 18.5 KB. The archive's metadata gives BigDataViewer the voxel size (0.205 x 0.205 x 0.35 micrometers) and three
+named, coloured, windowed channels (TagYFP, mRFP1.2, TL DIC). Pixels are read one plane at a time (672 x 512, 688 KB), and
+that server gave about 250 KB/s, so a plane takes a few seconds to appear; to browse faster, download the file and zarrify
+the local copy. Only the full resolution is shown, so a large image is slow to move through.
+
+![The middle plane of the three channels, composited by `--preview`: yeast cells in transmitted light, with two fluorescent cells in orange](docs/preview.png)
+
+*The middle plane of the three channels, as `--preview` composites them (image: IDR idr0011, CC BY 4.0). This is the demo's own
+rendering of the pixels read through the archive, not BigDataViewer's.*
+
+Status, so you know what was run:
+
+- **The window has not been opened by the author's tooling**, which had no display. `--check` runs everything the window
+  does except the call that opens it, including BigDataViewer's own volatile loading, and it passes; `--preview` shows the
+  pixels are right. If the window misbehaves, that is the part to look at.
+- **Only some images show.** N5 reads raw, transposed and gzip chunks of the common integer and float types, which is about half
+  of the arrays in refkv's own test fixtures. JPEG, JPEG 2000 and JPEG XR tiles (the JPEG XR CZI pyramid, NDPI, VSI, QPTIFF
+  and the compressed TIFFs among the demo site's examples), PackBits, and half floats are not decoded; the demo says so and
+  names the codecs instead of failing obscurely. Uncompressed CZI, Imaris, NIfTI, NRRD and MRC files work.
+- **One image per run:** the first OME-NGFF multiscales group of the archive, at its full resolution.
+- **Windows:** `pixi.toml` and `pixi.lock` also solve for `win-64` (JDK, Maven, Rust, CMake, clang), and the `demo` task is
+  written without shell scripts. Nothing has been built or run there. Rust's MSVC target needs the Visual Studio Build Tools'
+  linker, which conda does not provide, and whether JavaCPP finds the import library of the Rust DLL on Windows is unchecked.
+
 ## License
 
 Copyright (c) 2026 Howard Hughes Medical Institute.

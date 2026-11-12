@@ -67,7 +67,7 @@ public final class Policy {
      * (a link put in its place later does not move it).
      */
     public static Policy filesBelow(Path dir) {
-        return builder().prefix(UriRef.fileBase(dir).toString() + "/").build();
+        return builder().filesBelow(dir).build();
     }
 
     public boolean allowsPrivateHosts() {
@@ -144,6 +144,11 @@ public final class Policy {
             }
             prefixes.add(new Prefix(prefix, real));
             return this;
+        }
+
+        /** Allows {@code file:} sources below {@code dir}, as a prefix (see {@link #prefix}): add other prefixes for what else may be read. */
+        public Builder filesBelow(Path dir) {
+            return prefix(UriRef.fileBase(dir).toString() + "/");
         }
 
         /** UNSAFE: lets a request reach loopback, private, link-local and special addresses, and use any proxy. */
