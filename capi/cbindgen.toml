@@ -1,0 +1,15 @@
+language = "C"
+include_guard = "REFKV_H"
+sys_includes = ["stdint.h", "stddef.h", "stdbool.h"]
+no_includes = true
+documentation_style = "c99"
+usize_is_size_t = true
+style = "type"
+cpp_compat = true
+
+[export]
+prefix = ""
+exclude = ["WORKERS", "REDIRECTS"]
+
+[enum]
+prefix_with_name = true

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>org.refkv</groupId>
+  <artifactId>refkv-javacpp</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <name>refkv JavaCPP bindings</name>
+  <description>JavaCPP bindings to refkv (zarrify, phkv) and an N5 KeyValueAccess over refkv stores</description>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <javacpp.version>1.5.14</javacpp.version>
+    <n5.version>4.0.2</n5.version>
+    <n5-zarr.version>2.0.2</n5-zarr.version>
+    <!-- where `pixi run capi` puts the header and the shared library -->
+    <refkv.capi.include>${project.basedir}/../capi/include</refkv.capi.include>
+    <refkv.capi.lib>${project.basedir}/../capi/target/release</refkv.capi.lib>
+  </properties>
+
+  <repositories>
+    <repository>
+      <id>scijava.public</id>
+      <url>https://maven.scijava.org/content/groups/public</url>
+    </repository>
+  </repositories>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.bytedeco</groupId>
+      <artifactId>javacpp</artifactId>
+      <version>${javacpp.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.janelia.saalfeldlab</groupId>
+      <artifactId>n5</artifactId>
+      <version>${n5.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.janelia.saalfeldlab</groupId>
+      <artifactId>n5-zarr</artifactId>
+      <version>${n5-zarr.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.11.4</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- Builds the JNI library (libjnirefkv) from the generated org.refkv.javacpp.global.refkv.
+           That class is generated, and committed, by `pixi run java-gen`, which parses capi/include/refkv.h. -->
+      <plugin>
+        <groupId>org.bytedeco</groupId>
+        <artifactId>javacpp</artifactId>
+        <version>${javacpp.version}</version>
+        <configuration>
+          <classPath>${project.build.outputDirectory}</classPath>
+          <classOrPackageName>org.refkv.javacpp.global.refkv</classOrPackageName>
+          <includePaths>
+            <includePath>${refkv.capi.include}</includePath>
+          </includePaths>
+          <linkPaths>
+            <linkPath>${refkv.capi.lib}</linkPath>
+          </linkPaths>
+          <copyLibs>true</copyLibs>
+        </configuration>
+        <executions>
+          <execution>
+            <id>javacpp-build</id>
+            <phase>process-classes</phase>
+            <goals><goal>build</goal></goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.2</version>
+        <configuration>
+          <argLine>-Djava.library.path=${refkv.capi.lib} --enable-native-access=ALL-UNNAMED</argLine>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

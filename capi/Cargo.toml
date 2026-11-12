@@ -1,0 +1,34 @@
+# A C ABI over refkv's Rust core, for JavaCPP (../java) to bind. refkv has no C API of its own, so
+# this crate is it: `include/refkv.h` is generated from src/lib.rs by build.rs (cbindgen).
+# The zarrify driver reuses the modules of refkv's `vzip` CLI (../refkv/rust/refkv-cli/src) by
+# path, since that crate is a binary with no library to depend on.
+[package]
+name = "refkv-capi"
+version = "0.1.0"
+edition = "2024"
+description = "C ABI over refkv's zarrify pipeline and phkv reader"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "refkv_capi"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+# the same dependencies as refkv-cli, whose modules this crate includes
+refkv-ir = { path = "../refkv/rust/refkv-ir" }
+refkv-vzip = { path = "../refkv/rust/refkv-vzip" }
+refkv-phkv = { path = "../refkv/rust/refkv-phkv" }
+crc32c = "0.6"
+memmap2 = "0.9"
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip", "arbitrary_precision"] }
+ureq = { version = "3.4", default-features = false, features = ["rustls"] }
+
+[build-dependencies]
+cbindgen = { version = "0.29", default-features = false }
+
+[profile.release]
+opt-level = 3
+debug = false
