@@ -46,12 +46,67 @@ pixi run java-gen      # after changing capi's C API: regenerate global/refkv.ja
 
 - **Zarrify** writes a vzip archive (the default), a standalone phkv store, or a *hybrid* (a vzip archive that
   also carries a phkv container).
-- **`PhkvStore`** reads phkv stores and hybrids, not plain vzip archives: refkv's Rust core has a vzip writer but
-  no reader. Zarrify to `PHKV` or `HYBRID` for Java to read.
-- References are resolved from `file:` and `http(s):` sources (relative ones against the store's own file), other
-  keys of the store and literal data, with pins and checksums checked. http(s) reads are under refkv's reader
-  policy: loopback, private and link-local hosts are refused unless `allowPrivateHosts`.
+- **`VzipArchive`** is a Java reader of vzip archives (spec/bindings/vzip.md), with no native code. It opens a local
+  `Path` or an http(s) `URI`, and reads hybrids as vzip too.
+- **`PhkvStore`** reads phkv stores and hybrids through refkv's Rust phkv reader, which is the only reader of a
+  standalone phkv store.
+- Both implement `ReferenceStore`, which `RefkvKeyValueAccess` takes, so N5 reads either.
 - `RefkvKeyValueAccess` is read-only. Directories are key prefixes.
+
+### Opening a vzip archive
+
+```java
+// local: its sources resolve against the file, and file: sources are refused unless the policy allows them
+VzipArchive a = VzipArchive.open(Path.of("volume.vzip"), Policy.filesBelow(Path.of("/data/volumes")));
+
+// over HTTP: the tail is read with one range request, and with a page index no more of the central directory
+// than a lookup needs; every source is read by range requests too
+VzipArchive b = VzipArchive.open(URI.create("https://example.org/volume.vzip"), Policy.defaults());
+```
+
+### The reader policy
+
+A store can name any URL, so `Policy.defaults()` allows `http` and `https` only, and only public addresses
+(spec/refkv.md section 6.7). Loopback, private, link-local and special addresses, other schemes (`file` included) and
+proxies need `allowPrivateHosts`, `allowScheme`/`prefix`, and `allowUncheckedProxy`, each named for what it risks.
+A prefix list confines `file:` sources to a directory, following symbolic links to the real path.
+
+Known limits:
+- **DNS rebinding.** The spec requires connecting only to an address the reader checked. `java.net.http.HttpClient` does
+  not let a caller choose the address, so the reader resolves and checks every address just before the request and
+  cannot rule out that the connection resolves the name again. For an untrusted store, use prefixes, which do not
+  depend on addresses.
+- **Windows paths are implemented but not run on Windows.** `file:` URLs map to drive-letter paths
+  (`file:///C:/data/x` is `C:\data\x`) and, with `allowFileHosts`, to UNC paths (`file://server/share/x`), as
+  spec/refkv.md section 5 says; `file:///data/x` is an error there, since it names no drive. The rules are pure string
+  functions, tested on every system, but the step that opens the file was only exercised on macOS, so a Windows CI job is
+  still wanted. `allowFileHosts` is unsafe (reading a UNC path connects to the server, which may send the user's
+  credentials) and does not confine a store to its share: `../..` can name another share of the same server, so confine
+  it with a `prefix`. The native phkv reader (`capi/src/resolver.rs`) has no Windows mapping yet.
+- A reference's reads are made one after another, and reads of different `get`s are not combined.
+- A Java array holds 2^31 - 1 bytes, so `maxBytesPerGet` defaults to just under that, not the spec's 2^31.
+
+### The choice of ZIP library
+
+None. The reader parses the container itself, and uses the JDK's `java.util.zip.Inflater` for DEFLATE and `CRC32C`.
+A vzip archive is a valid ZIP file, and both libraries tried open one: `java.util.zip.ZipFile`, and Apache Commons
+Compress `ZipFile` (over a `SeekableByteChannel`, so it could be backed by HTTP). They do not fit. What was measured,
+on an archive made by `Zarrify` (21 entries):
+
+- **Both read the whole central directory at open.** Commons Compress made 132 channel reads for the 21 entries; over
+  HTTP that is hundreds of requests. It also defeats the page index (spec/bindings/vzip.md section 12), which exists so
+  that a lookup reads one bounded slice of the directory.
+- **Neither handles a damaged record the way vzip says to.** With one record's signature corrupted, the JDK's `ZipFile`
+  refuses the whole archive, and Commons Compress opens it and reports **2 of 21 entries**, dropping the other 19 keys
+  without an error. For a paged archive vzip confines the damage: the reader opens, and only the page that cannot be
+  parsed is an entry error (section 13.3). Without a page index it is an archive error.
+- **The directory is read from the end by fixed rules:** the end record 60 or 44 bytes from the end (section 10.4),
+  the entry counts ignored and the directory located only through the zip64 record (section 10.2), and a reference's
+  payload taken from its record's extra field (section 11.3). Neither library does these.
+
+`Inflater` supplies what section 13.1's "DEFLATE must end exactly at the end of the body" needs: `finished()` and
+`getRemaining()`. vzip fixes every field a reader needs (body offsets come from the central directory alone and local
+headers are never read), so parsing the container is a small part of the reader.
 
 ## Status
 

@@ -12,9 +12,11 @@ import org.janelia.saalfeldlab.n5.N5Exception.N5NoSuchKeyException;
 import org.janelia.saalfeldlab.n5.readdata.LazyRead;
 import org.janelia.saalfeldlab.n5.readdata.ReadData;
 import org.janelia.saalfeldlab.n5.readdata.VolatileReadData;
+import org.refkv.vzip.ReferenceException;
+import org.refkv.vzip.ReferenceStore;
 
 /**
- * A read-only N5 {@link KeyValueAccess} over a refkv store, so that N5 readers (N5, Zarr, OME-Zarr)
+ * A read-only N5 {@link KeyValueAccess} over a refkv store (a {@link org.refkv.vzip.VzipArchive} or a {@link PhkvStore}), so that N5 readers (N5, Zarr, OME-Zarr)
  * read foreign file formats that refkv zarrifies, with chunks read from the original files on demand.
  *
  * <pre>{@code
@@ -28,9 +30,9 @@ import org.janelia.saalfeldlab.n5.readdata.VolatileReadData;
  * is the caller's job, and reads after it fail.
  */
 public class RefkvKeyValueAccess implements KeyValueAccess {
-    private final PhkvStore store;
+    private final ReferenceStore store;
 
-    public RefkvKeyValueAccess(PhkvStore store) {
+    public RefkvKeyValueAccess(ReferenceStore store) {
         this.store = store;
     }
 
@@ -79,13 +81,14 @@ public class RefkvKeyValueAccess implements KeyValueAccess {
     @Override
     public boolean isFile(String normalPath) {
         String key = normalize(normalPath);
-        return !key.isEmpty() && store.classify(key) != PhkvStore.Kind.MISSING;
+        return !key.isEmpty() && store.classify(key) != ReferenceStore.Kind.MISSING;
     }
 
     @Override
     public boolean isDirectory(String normalPath) {
         String key = normalize(normalPath);
-        return key.isEmpty() ? store.keyCount() > 0 : !store.list(prefixOf(key)).isEmpty();
+        // the root is always a directory, however few keys the store holds
+        return key.isEmpty() || !store.list(prefixOf(key)).isEmpty();
     }
 
     @Override
@@ -130,7 +133,7 @@ public class RefkvKeyValueAccess implements KeyValueAccess {
             byte[] bytes;
             try {
                 bytes = key.isEmpty() ? null : length < 0 ? store.get(key) : store.get(key, offset, length);
-            } catch (RefkvException e) {
+            } catch (RefkvException | ReferenceException e) {
                 throw new N5IOException("Reading " + key + ": " + e.getMessage(), e);
             }
             if (bytes == null) {
@@ -170,7 +173,7 @@ public class RefkvKeyValueAccess implements KeyValueAccess {
                     names.add(rest);
                 }
             }
-        } catch (RefkvException e) {
+        } catch (RefkvException | ReferenceException e) {
             throw new N5IOException("Listing " + key + ": " + e.getMessage(), e);
         }
         return names.toArray(new String[0]);

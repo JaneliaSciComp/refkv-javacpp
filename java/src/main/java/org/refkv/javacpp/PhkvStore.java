@@ -11,6 +11,7 @@ import org.bytedeco.javacpp.PointerPointer;
 import org.refkv.javacpp.global.refkv.RefkvBuffer;
 import org.refkv.javacpp.global.refkv.RefkvPhkv;
 import org.refkv.javacpp.global.refkv.RefkvStrings;
+import org.refkv.vzip.ReferenceStore;
 
 /**
  * A refkv store opened for reading: a standalone phkv store, or a hybrid vzip archive. Values that
@@ -19,7 +20,7 @@ import org.refkv.javacpp.global.refkv.RefkvStrings;
  *
  * <p>Thread-safe: reads take turns in the native store. {@link #close()} waits for reads under way.
  */
-public final class PhkvStore implements AutoCloseable {
+public final class PhkvStore implements ReferenceStore {
     private final RefkvPhkv handle;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private boolean closed;
@@ -34,9 +35,6 @@ public final class PhkvStore implements AutoCloseable {
         Native.check(refkv_phkv_open(path, h));
         return new PhkvStore(h);
     }
-
-    /** The kind of value a key holds. */
-    public enum Kind { MISSING, BYTES, REFERENCE }
 
     private RefkvPhkv live() {
         if (closed) {
@@ -63,6 +61,7 @@ public final class PhkvStore implements AutoCloseable {
         return read(h -> refkv_phkv_key_count(h));
     }
 
+    @Override
     public Kind classify(String key) {
         return read(h -> switch (Native.check(refkv_phkv_classify(h, key))) {
             case REFKV_BYTES -> Kind.BYTES;
@@ -72,11 +71,13 @@ public final class PhkvStore implements AutoCloseable {
     }
 
     /** The value at {@code key}, references resolved; null if there is no such key. */
+    @Override
     public byte[] get(String key) {
         return get(key, REFKV_REQUEST_WHOLE, 0, 0);
     }
 
     /** Bytes {@code [offset, offset + length)} of the value at {@code key}, clipped to its end; null if there is no such key. */
+    @Override
     public byte[] get(String key, long offset, long length) {
         if (offset < 0 || length < 0) {
             throw new IllegalArgumentException("offset " + offset + ", length " + length);
@@ -95,6 +96,7 @@ public final class PhkvStore implements AutoCloseable {
     }
 
     /** The size of the value at {@code key} as {@link #get(String)} gives it, without reading it; -1 if there is no such key. */
+    @Override
     public long size(String key) {
         return read(h -> {
             LongPointer size = new LongPointer(1);
@@ -107,6 +109,7 @@ public final class PhkvStore implements AutoCloseable {
     }
 
     /** The keys that are not hidden and start with {@code prefix} ("" for all), in UTF-8 order. */
+    @Override
     public List<String> list(String prefix) {
         return read(h -> {
             RefkvStrings out = new RefkvStrings(null);

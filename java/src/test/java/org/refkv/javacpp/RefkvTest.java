@@ -13,12 +13,15 @@ import org.janelia.saalfeldlab.n5.N5Exception;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.zarr.v3.ZarrV3KeyValueReader;
 import org.junit.jupiter.api.BeforeAll;
+import org.refkv.vzip.Policy;
+import org.refkv.vzip.ReferenceStore;
+import org.refkv.vzip.VzipArchive;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /** mrc_chunk_rows.mrc: a 1000 x 1100 int8 image, in chunks of 550 rows, after a 1024-byte header. */
 class RefkvTest {
-    static final Path FIXTURES = Path.of(System.getProperty("refkv.fixtures", "../refkv/fixtures")).toAbsolutePath();
+    static final Path FIXTURES = Path.of(System.getProperty("refkv.fixtures", "../refkv/fixtures")).toAbsolutePath().normalize();
     static final int HEADER = 1024, ROWS = 550, WIDTH = 1000;
     static Path mrc;
     static byte[] mrcBytes;
@@ -43,9 +46,9 @@ class RefkvTest {
     @Test
     void readsChunksFromTheOriginalFile(@TempDir Path dir) {
         try (PhkvStore s = zarrified(dir, Zarrify.Container.PHKV)) {
-            assertEquals(PhkvStore.Kind.REFERENCE, s.classify("0/c/0/0"));
-            assertEquals(PhkvStore.Kind.BYTES, s.classify("zarr.json"));
-            assertEquals(PhkvStore.Kind.MISSING, s.classify("nope"));
+            assertEquals(ReferenceStore.Kind.REFERENCE, s.classify("0/c/0/0"));
+            assertEquals(ReferenceStore.Kind.BYTES, s.classify("zarr.json"));
+            assertEquals(ReferenceStore.Kind.MISSING, s.classify("nope"));
             assertEquals(ROWS * WIDTH, s.size("0/c/1/0"));
             assertEquals(-1, s.size("nope"));
             assertArrayEquals(chunk(0), s.get("0/c/0/0"));
@@ -87,6 +90,28 @@ class RefkvTest {
                 assertNotNull(block, "block " + i);
                 assertArrayEquals(chunk(i), (byte[]) block.getData(), "block " + i);
             }
+        }
+    }
+
+    @Test
+    void n5ReadsTheZarrifiedFileThroughAVzipArchive(@TempDir Path dir) throws Exception {
+        // the default container is a plain vzip archive, which the Java reader opens without the native library's reader
+        Path out = dir.resolve("mrc.vzip");
+        Zarrify.convert(mrc.toString(), out.toString());
+        Policy policy = Policy.filesBelow(FIXTURES);
+        try (VzipArchive a = VzipArchive.open(out, policy)) {
+            N5Reader reader = new ZarrV3KeyValueReader(new RefkvKeyValueAccess(a), "", new GsonBuilder(), false);
+            DatasetAttributes attrs = reader.getDatasetAttributes("0");
+            for (int i = 0; i < 2; i++) {
+                assertArrayEquals(chunk(i), (byte[]) reader.readBlock("0", attrs, 0, i).getData(), "block " + i);
+            }
+            assertTrue(Arrays.asList(reader.list("")).contains("0"));
+        }
+        try (VzipArchive a = VzipArchive.open(out, Policy.defaults())) {
+            N5Reader reader = new ZarrV3KeyValueReader(new RefkvKeyValueAccess(a), "", new GsonBuilder(), false);
+            DatasetAttributes attrs = reader.getDatasetAttributes("0");
+            assertThrows(N5Exception.N5IOException.class, () -> reader.readBlock("0", attrs, 0, 0),
+                    "the default policy refuses the file: source the archive names");
         }
     }
 
