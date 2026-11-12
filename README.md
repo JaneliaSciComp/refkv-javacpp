@@ -126,3 +126,19 @@ headers are never read), so parsing the container is a small part of the reader.
 
 macOS arm64 only so far (`pixi.toml`'s `platforms`); the C ABI is portable, but only that platform is built and tested.
 refkv itself is a proof of concept with no stability promise before 1.0.
+
+## License
+
+Copyright (c) 2026 Howard Hughes Medical Institute.
+
+Licensed under either of
+
+- the BSD 3-Clause License ([LICENSE-BSD-3-Clause](LICENSE-BSD-3-Clause)), or
+- the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)),
+
+at your option (SPDX: `BSD-3-Clause OR Apache-2.0`).
+
+The `refkv/` submodule is [refkv](https://github.com/d-v-b/refkv), licensed `MIT OR Apache-2.0` by its authors, and
+`capi/` compiles some of its source into the native library (`capi/src/lib.rs` includes modules of its `vzip` CLI by
+path). A built `librefkv_capi` therefore contains refkv's code under its terms; see `refkv/LICENSE-MIT` and
+`refkv/LICENSE-APACHE`, and keep them with a binary you redistribute. The Java dependencies keep their own licenses.
