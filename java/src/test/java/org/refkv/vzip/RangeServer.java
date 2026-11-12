@@ -90,7 +90,8 @@ final class RangeServer implements AutoCloseable {
         }
         Matcher m = RANGE.matcher(range);
         if (!m.matches()) {
-            reply(ex, 400, new byte[0], -1, -1, -1);
+            // a form of Range this server does not do, such as several ranges: a server may ignore Range, and send the whole object
+            reply(ex, 200, body, -1, -1, body.length);
             return;
         }
         long a, z;

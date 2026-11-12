@@ -49,7 +49,8 @@ pixi run java-gen      # after changing capi's C API: regenerate global/refkv.ja
 - **`VzipArchive`** is a Java reader of vzip archives (spec/bindings/vzip.md), with no native code. It opens a local
   `Path` or an http(s) `URI`, and reads hybrids as vzip too.
 - **`PhkvStore`** reads phkv stores and hybrids through refkv's Rust phkv reader, which is the only reader of a
-  standalone phkv store.
+  standalone phkv store. It reads the store's own records natively and resolves their references in Java, with the same
+  `ReferenceResolver` and `Policy` as `VzipArchive`.
 - Both implement `ReferenceStore`, which `RefkvKeyValueAccess` takes, so N5 reads either.
 - `RefkvKeyValueAccess` is read-only. Directories are key prefixes.
 
@@ -62,6 +63,11 @@ VzipArchive a = VzipArchive.open(Path.of("volume.vzip"), Policy.filesBelow(Path.
 // over HTTP: the tail is read with one range request, and with a page index no more of the central directory
 // than a lookup needs; every source is read by range requests too
 VzipArchive b = VzipArchive.open(URI.create("https://example.org/volume.vzip"), Policy.defaults());
+```
+
+```java
+// a phkv store, or a hybrid archive: the same policy decides what its references may read
+PhkvStore c = PhkvStore.open("volume.phkv", Policy.filesBelow(Path.of("/data/volumes")));
 ```
 
 ### The reader policy
@@ -84,13 +90,13 @@ Known limits:
   its cfg swapped. The step that opens a file on Windows itself was never run, so a Windows CI job is still wanted.
   `allowFileHosts` is unsafe (reading a UNC path connects to the server, which may send the user's credentials) and
   does not confine a store to its share: `../..` can name another share of the same server, so confine it with a `prefix`.
-- **`PhkvStore`'s resolver is weaker than `VzipArchive`'s.** References of a phkv store are resolved in `capi/src/resolver.rs`,
-  which has: no scheme policy (it reads any `file:` source a store names, and refuses `http(s)` only by address);
-  for `http(s)`, a size pin that is checked only when the response happens to give a total, `etag` and
-  `modified_not_after` pins that are ignored (the spec says pins fail closed), no redirects, and no validation of
-  `Content-Range`. `file:` sources are held to the spec (path rules, and every pin). **Prefer `VzipArchive` for a store
-  you do not trust**, or zarrify to a vzip archive or a hybrid and open that. The fix is to resolve a phkv store's
-  references in Java, with the same code as `VzipArchive`, from the payload `fetch` already returns.
+  The native mapping (`capi/src/filemap.rs`) now serves only the unchecked native resolver above.
+- **`PhkvStore` resolves references in Java**, so `PhkvStore.open(path)` refuses `file:` sources unless the policy allows
+  them, as `VzipArchive` does. It used to resolve them in the native reader, which has no scheme policy and does not check
+  http(s) `etag` and `modified_not_after` pins, follow redirects or validate `Content-Range` (read from
+  `capi/src/resolver.rs`). That resolver is still in the C ABI as `refkv_phkv_get`, reachable as
+  `PhkvStore.unsafeNativeGet`, only so that `CrossCheckTest` can compare Java resolution with an independent
+  implementation: it should not be used on a store you do not trust, and could be deleted.
 - A reference's reads are made one after another, and reads of different `get`s are not combined.
 - A Java array holds 2^31 - 1 bytes, so `maxBytesPerGet` defaults to just under that, not the spec's 2^31.
 

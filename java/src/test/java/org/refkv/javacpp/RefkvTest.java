@@ -40,7 +40,7 @@ class RefkvTest {
         Path out = dir.resolve("mrc." + container.name().toLowerCase());
         Zarrify.Result r = Zarrify.convert(mrc.toString(), out.toString(), Zarrify.options().format(container));
         assertTrue(r.summaryJson().contains("\"format\": \"mrc\""), r.summaryJson());
-        return PhkvStore.open(out.toString());
+        return PhkvStore.open(out.toString(), Policy.filesBelow(FIXTURES));
     }
 
     @Test
@@ -57,13 +57,41 @@ class RefkvTest {
             assertEquals(10, s.get("0/c/1/0", ROWS * WIDTH - 10, 500).length, "a range is clipped to the value's end");
             assertNull(s.get("nope"));
             assertTrue(new String(s.get("zarr.json")).contains("\"zarr_format\":3"));
-            s.allowFileHosts(true); // an unsafe setting that changes nothing for a source with no host
-            assertArrayEquals(chunk(0), s.get("0/c/0/0"));
-            s.allowFileHosts(false);
             List<String> keys = s.list("0/");
             assertEquals(List.of("0/c/0/0", "0/c/1/0", "0/zarr.json"), keys);
             assertEquals(s.keyCount(), s.list("").size() + 0L);
             assertTrue(s.entryInfo("0/c/0/0").contains("\"reference\""));
+        }
+    }
+
+    @Test
+    void thePolicyDecidesWhichSourcesAPhkvStoreReads(@TempDir Path dir, @TempDir Path elsewhere) throws Exception {
+        Path out = dir.resolve("mrc.phkv");
+        Zarrify.convert(mrc.toString(), out.toString(), Zarrify.options().format(Zarrify.Container.PHKV));
+        // the default policy refuses the file: source the store names: classifying works, resolving does not
+        try (PhkvStore s = PhkvStore.open(out.toString())) {
+            assertEquals(ReferenceStore.Kind.REFERENCE, s.classify("0/c/0/0"));
+            assertEquals(ReferenceStore.Kind.BYTES, s.classify("zarr.json"));
+            assertEquals((long) ROWS * WIDTH, s.size("0/c/0/0"), "a size comes from the payload alone: no source is read");
+            org.refkv.vzip.ReferenceException e = assertThrows(org.refkv.vzip.ReferenceException.class, () -> s.get("0/c/0/0"));
+            assertEquals(org.refkv.vzip.ErrorClass.RESOLUTION, e.errorClass(), e.getMessage());
+            assertTrue(e.getMessage().contains("scheme"), e.getMessage());
+            assertTrue(new String(s.get("zarr.json")).contains("zarr_format"), "bytes values need no source");
+        }
+        // a prefix that does not cover the source refuses it too
+        try (PhkvStore s = PhkvStore.open(out.toString(), Policy.filesBelow(elsewhere))) {
+            assertEquals(org.refkv.vzip.ErrorClass.RESOLUTION,
+                    assertThrows(org.refkv.vzip.ReferenceException.class, () -> s.get("0/c/0/0")).errorClass());
+        }
+        try (PhkvStore s = PhkvStore.open(out.toString(), Policy.filesBelow(FIXTURES))) {
+            assertArrayEquals(chunk(0), s.get("0/c/0/0"));
+            assertArrayEquals(chunk(1), s.get("0/c/1/0", 0, ROWS * WIDTH));
+            assertEquals(5, s.get("0/c/0/0", org.refkv.vzip.Request.range(10, 15)).length);
+            assertArrayEquals(Arrays.copyOfRange(chunk(1), ROWS * WIDTH - 7, ROWS * WIDTH), s.get("0/c/1/0", org.refkv.vzip.Request.suffix(7)));
+            assertEquals(3, s.get("0/c/1/0", org.refkv.vzip.Request.offset(ROWS * WIDTH - 3)).length);
+            assertEquals(org.refkv.vzip.ErrorClass.REQUEST,
+                    assertThrows(org.refkv.vzip.ReferenceException.class, () -> s.get("0/c/0/0", org.refkv.vzip.Request.range(5, 2))).errorClass());
+            assertArrayEquals(chunk(0), s.unsafeNativeGet("0/c/0/0"), "the native resolver, which has no policy, agrees");
         }
     }
 

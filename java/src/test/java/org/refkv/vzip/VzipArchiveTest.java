@@ -87,9 +87,9 @@ class VzipArchiveTest {
             assertEquals("ell", s(a.get("a", 1, 3)));
             assertEquals("o", s(a.get("a", 4, 100)), "a range is clipped to the value's end");
             assertEquals("", s(a.get("a", 50, 5)));
-            assertEquals("llo", s(a.get("a", VzipArchive.Request.offset(2))));
-            assertEquals("llo", s(a.get("a", VzipArchive.Request.suffix(3))));
-            assertEquals("hello", s(a.get("a", VzipArchive.Request.suffix(99))));
+            assertEquals("llo", s(a.get("a", Request.offset(2))));
+            assertEquals("llo", s(a.get("a", Request.suffix(3))));
+            assertEquals("hello", s(a.get("a", Request.suffix(99))));
             assertEquals("world", s(a.get("b/c", 6, 5)), "a window of a deflated value");
             assertEquals(5, a.size("a"));
             assertEquals(23, a.size("b/c"));
@@ -111,8 +111,8 @@ class VzipArchiveTest {
         VzipBuilder v = new VzipBuilder();
         v.bytes("a", "hello");
         try (VzipArchive a = open(v)) {
-            fails(ErrorClass.REQUEST, () -> a.get("a", VzipArchive.Request.range(3, 2)));
-            fails(ErrorClass.REQUEST, () -> a.get("nope", VzipArchive.Request.range(3, 2)));
+            fails(ErrorClass.REQUEST, () -> a.get("a", Request.range(3, 2)));
+            fails(ErrorClass.REQUEST, () -> a.get("nope", Request.range(3, 2)));
         }
     }
 
@@ -168,8 +168,8 @@ class VzipArchiveTest {
                     assertEquals(mix.substring(from, to), s(a.get("mix", from, to - from)), from + ".." + to);
                 }
             }
-            assertEquals(mix.substring(5), s(a.get("mix", VzipArchive.Request.offset(5))));
-            assertEquals(mix.substring(mix.length() - 4), s(a.get("mix", VzipArchive.Request.suffix(4))));
+            assertEquals(mix.substring(5), s(a.get("mix", Request.offset(5))));
+            assertEquals(mix.substring(mix.length() - 4), s(a.get("mix", Request.suffix(4))));
             assertEquals(0, a.get("empty").length);
             assertEquals("z", s(a.get("zero")), "a zero-length range resolves nothing, so its source's absence is no error");
         }

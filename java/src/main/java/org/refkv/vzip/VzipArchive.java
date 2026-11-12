@@ -10,13 +10,11 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
-import java.util.zip.CRC32C;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
@@ -33,45 +31,10 @@ import java.util.zip.Inflater;
  * <p>Thread-safe. Close it to release the file.
  */
 public final class VzipArchive implements ReferenceStore {
-    /** A request of {@code get} (spec/refkv.md section 6.2). Offsets and counts are unsigned. */
-    public record Request(Type type, long a, long b) {
-        public enum Type { WHOLE, RANGE, OFFSET, SUFFIX }
-
-        public static Request whole() {
-            return new Request(Type.WHOLE, 0, 0);
-        }
-
-        /** Bytes {@code [start, end)}. */
-        public static Request range(long start, long end) {
-            return new Request(Type.RANGE, start, end);
-        }
-
-        /** From {@code start} to the end. */
-        public static Request offset(long start) {
-            return new Request(Type.OFFSET, start, 0);
-        }
-
-        /** The last {@code count} bytes. */
-        public static Request suffix(long count) {
-            return new Request(Type.SUFFIX, count, 0);
-        }
-
-        /** The window {@code [a, b)} of a value of {@code n} bytes. */
-        long[] window(long n) {
-            return switch (type) {
-                case WHOLE -> new long[] {0, n};
-                case RANGE -> new long[] {Math.min(a, n), Math.min(b, n)};
-                case OFFSET -> new long[] {Math.min(a, n), n};
-                case SUFFIX -> new long[] {Math.max(n - a, 0), n};
-            };
-        }
-    }
-
     static final String RESERVED = "__vz__/";
     static final String SOURCES_KEY = "__vz__/sources";
     static final String INDEX_KEY = "__vz__/index";
-    private static final int EXTRA_RANGE = 0x7A76, EXTRA_CONCAT = 0x7A77;
-    private static final int MAX_PAYLOAD = 65519;
+    private static final int EXTRA_RANGE = ReferenceResolver.RANGE, EXTRA_CONCAT = ReferenceResolver.CONCAT;
     /** The bytes of the end of an http(s) archive read first: its end records, and what lies in them. */
     private static final int TAIL = 512 << 10;
     private static final int PAGE_CACHE = 64;
@@ -182,7 +145,7 @@ public final class VzipArchive implements ReferenceStore {
             return size() > PAGE_CACHE;
         }
     };
-    private final Map<Integer, UriRef> resolvedUrls = new HashMap<>();
+    private final ReferenceResolver resolver;
 
     private record CdRecord(String name, int flags, int method, long csize, long usize, long lho, byte[] extra) {}
 
@@ -210,6 +173,7 @@ public final class VzipArchive implements ReferenceStore {
         this.records = records;
         this.index = index;
         this.pinned = pinned;
+        this.resolver = new ReferenceResolver(sources, base, policy, http, this::openKey);
     }
 
     // ---- opening ----
@@ -720,7 +684,7 @@ public final class VzipArchive implements ReferenceStore {
             return bodyValue(b.body(), request, false);
         }
         RefEntry r = (RefEntry) e;
-        return resolveReference(r.id(), r.payload(), request);
+        return resolver.resolve(r.id(), r.payload(), request);
     }
 
     @Override
@@ -736,11 +700,7 @@ public final class VzipArchive implements ReferenceStore {
             return b.body().usize();
         }
         RefEntry r = (RefEntry) e;
-        long total = 0;
-        for (Messages.Range p : decodePayload(r.id(), r.payload())) {
-            total += p.size();
-        }
-        return total;
+        return resolver.size(r.id(), r.payload());
     }
 
     /**
@@ -812,8 +772,7 @@ public final class VzipArchive implements ReferenceStore {
     // ---- bodies ----
 
     private ReferenceException tooMuch(String what, long n) {
-        return new ReferenceException(ErrorClass.REQUEST, what + " of " + Long.toUnsignedString(n) + " bytes exceeds the limit of "
-                + policy.maxBytesPerGet() + " bytes per get");
+        return ReferenceResolver.tooMuch(policy, what, n);
     }
 
     /** The window of a bytes entry's value; body errors (spec/bindings/vzip.md section 13.3). */
@@ -851,241 +810,7 @@ public final class VzipArchive implements ReferenceStore {
         }
     }
 
-    // ---- references (spec/refkv.md section 6.3) ----
-
-    private static ReferenceException payloadError(String m) {
-        return new ReferenceException(ErrorClass.PAYLOAD, m);
-    }
-
-    private List<Messages.Range> decodePayload(int id, byte[] payload) {
-        if (payload.length > MAX_PAYLOAD) {
-            throw payloadError("the reference payload is " + payload.length + " bytes, over " + MAX_PAYLOAD);
-        }
-        List<Messages.Range> parts;
-        try {
-            parts = id == EXTRA_RANGE ? Messages.decodeRange(payload) : Messages.decodeConcat(payload);
-        } catch (Wire.Malformed e) {
-            throw payloadError("malformed " + (id == EXTRA_RANGE ? "Range" : "Concat") + ": " + e.getMessage());
-        }
-        long total = 0;
-        for (int i = 0; i < parts.size(); i++) {
-            Messages.Range p = parts.get(i);
-            if (!p.literal() && Long.compareUnsigned(p.source(), sources.size()) >= 0) {
-                throw payloadError("range " + i + ": source " + p.source() + " is out of bounds");
-            }
-            long next = total + p.size();
-            if (Long.compareUnsigned(next, total) < 0) {
-                throw payloadError("the reference's size exceeds 2^64 - 1");
-            }
-            total = next;
-        }
-        return parts;
-    }
-
-    /** A part of a value the window needs: a range, and which of its bytes ({@code i}, {@code j}, relative to its start). */
-    private record Part(Messages.Range range, long i, long j, int outAt) {
-        boolean wholeRange() {
-            return range.crc32c() >= 0;
-        }
-
-        /** The bytes of the source this part must read: its range whole if it has a checksum, else its window. */
-        long from() {
-            return wholeRange() ? range.offset() : range.offset() + i;
-        }
-
-        long to() {
-            return wholeRange() ? range.offset() + range.length() : range.offset() + j;
-        }
-    }
-
-    /** One read of a url source, combined from the parts it serves. */
-    private static final class Span {
-        final int source;
-        long from, to;
-        final List<Part> parts = new ArrayList<>();
-        byte[] bytes;
-
-        Span(int source, long from, long to, Part first) {
-            this.source = source;
-            this.from = from;
-            this.to = to;
-            parts.add(first);
-        }
-    }
-
-    private byte[] resolveReference(int id, byte[] payload, Request req) {
-        List<Messages.Range> ranges = decodePayload(id, payload);
-        long total = 0;
-        for (Messages.Range r : ranges) {
-            total += r.size();
-        }
-        if (total < 0) {
-            throw tooMuch("a value", total);
-        }
-        long[] w = req.window(total);
-        long a = w[0], b = w[1];
-        if (b - a > policy.maxBytesPerGet()) {
-            throw tooMuch("a window", b - a);
-        }
-        // the parts whose bytes overlap the window in a non-empty interval; no other range is resolved
-        List<Part> parts = new ArrayList<>();
-        long pos = 0;
-        for (Messages.Range r : ranges) {
-            long sz = r.size();
-            long s = Math.max(a, pos), e = Math.min(b, pos + sz);
-            if (s < e) {
-                parts.add(new Part(r, s - pos, e - pos, (int) (s - a)));
-            }
-            pos += sz;
-        }
-        // rule 5: what the get builds its value from, and what it fetches, before any source is read
-        long built = 0;
-        for (Part p : parts) {
-            built += p.wholeRange() ? p.range().length() : p.j() - p.i();
-            if (built < 0 || built > policy.maxBytesPerGet()) {
-                throw tooMuch("the ranges of a value", built);
-            }
-        }
-        Map<String, byte[]> held = new HashMap<>();
-        long fetched = holdKeySources(parts, held);
-        List<Span> spans = coalesce(parts);
-        if (spans.size() > policy.maxReadsPerGet()) {
-            throw new ReferenceException(ErrorClass.REQUEST, "a get needs " + spans.size() + " reads of url sources, over the limit of "
-                    + policy.maxReadsPerGet());
-        }
-        for (Span s : spans) {
-            fetched += s.to - s.from;
-            if (fetched < 0 || fetched > policy.maxBytesPerGet()) {
-                throw tooMuch("the reads of a value", fetched);
-            }
-        }
-        for (Span s : spans) {
-            s.bytes = readUrl(s.source, s.from, s.to);
-        }
-        byte[] out = new byte[(int) (b - a)];
-        Map<Part, Span> spanOf = new java.util.IdentityHashMap<>();
-        for (Span s : spans) {
-            for (Part p : s.parts) {
-                spanOf.put(p, s);
-            }
-        }
-        for (Part p : parts) {
-            Messages.Range r = p.range();
-            byte[] chunk; // bytes [p.i, p.j) of the range
-            int from = 0;
-            byte[] whole;
-            if (r.literal()) {
-                whole = r.data();
-                from = (int) p.i();
-            } else {
-                Messages.Source src = sources.get((int) r.source());
-                switch (src.kind()) {
-                    case DATA -> {
-                        checkLength(src.data().length, p.to(), "a data source");
-                        whole = src.data();
-                        from = (int) p.from();
-                        if (p.wholeRange()) {
-                            checkCrc(r, Arrays.copyOfRange(whole, from, (int) p.to()));
-                            from += (int) p.i();
-                        }
-                    }
-                    case KEY -> {
-                        byte[] v = keySourceBytes(src.text(), p.from(), p.to(), held);
-                        if (p.wholeRange()) {
-                            checkCrc(r, v);
-                            whole = v;
-                            from = (int) p.i();
-                        } else {
-                            whole = v;
-                            from = 0;
-                        }
-                    }
-                    default -> {
-                        Span s = spanOf.get(p);
-                        whole = s.bytes;
-                        from = (int) (p.from() - s.from);
-                        if (p.wholeRange()) {
-                            checkCrc(r, Arrays.copyOfRange(whole, from, from + (int) r.length()));
-                            from += (int) p.i();
-                        }
-                    }
-                }
-            }
-            chunk = whole;
-            System.arraycopy(chunk, from, out, p.outAt(), (int) (p.j() - p.i()));
-        }
-        return out;
-    }
-
-    private static void checkLength(long have, long need, String what) {
-        if (Long.compareUnsigned(need, have) > 0) {
-            throw new ReferenceException(ErrorClass.RESOLUTION, what + " has " + have + " bytes, short of the " + Long.toUnsignedString(need) + " needed");
-        }
-    }
-
-    private static void checkCrc(Messages.Range r, byte[] bytes) {
-        CRC32C crc = new CRC32C();
-        crc.update(bytes, 0, bytes.length);
-        if (crc.getValue() != r.crc32c()) {
-            throw new ReferenceException(ErrorClass.RESOLUTION, "a range of source " + r.source() + " does not match its CRC-32C");
-        }
-    }
-
-    /** Combines the reads of url sources that lie close together into one (spec/refkv.md section 6.3, coalescing). */
-    private List<Span> coalesce(List<Part> parts) {
-        Map<Integer, List<Part>> bySource = new LinkedHashMap<>();
-        for (Part p : parts) {
-            if (!p.range().literal()) {
-                int s = (int) p.range().source();
-                if (sources.get(s).kind() == Messages.SourceKind.URL) {
-                    bySource.computeIfAbsent(s, k -> new ArrayList<>()).add(p);
-                }
-            }
-        }
-        List<Span> spans = new ArrayList<>();
-        long budget = policy.maxBytesPerGet();
-        for (Map.Entry<Integer, List<Part>> en : bySource.entrySet()) {
-            List<Part> ps = en.getValue();
-            ps.sort(Comparator.comparingLong(Part::from));
-            Span cur = null;
-            for (Part p : ps) {
-                if (cur != null && p.from() - cur.to <= policy.coalescingGap() && Math.max(cur.to, p.to()) - cur.from <= budget) {
-                    cur.to = Math.max(cur.to, p.to());
-                    cur.parts.add(p);
-                } else {
-                    cur = new Span(en.getKey(), p.from(), p.to(), p);
-                    spans.add(cur);
-                }
-            }
-        }
-        return spans;
-    }
-
-    /**
-     * Looks up the entries of the key sources this get uses, and holds the compressed ones whole, once a get (rule 5).
-     * Returns the bytes this holds, which count as fetched.
-     */
-    private long holdKeySources(List<Part> parts, Map<String, byte[]> held) {
-        long bytes = 0;
-        java.util.Set<String> seen = new java.util.HashSet<>();
-        for (Part p : parts) {
-            if (p.range().literal()) {
-                continue;
-            }
-            Messages.Source src = sources.get((int) p.range().source());
-            if (src.kind() != Messages.SourceKind.KEY || !seen.add(src.text())) {
-                continue;
-            }
-            Entry e = keyEntry(src.text());
-            if (e instanceof BytesEntry b && b.body().method() == 8) {
-                bytes += Math.max(b.body().usize(), b.body().csize());
-                if (bytes < 0 || bytes > policy.maxBytesPerGet()) {
-                    throw tooMuch("the key sources of a value", bytes);
-                }
-            }
-        }
-        return bytes;
-    }
+    // ---- references (spec/refkv.md section 6.3), resolved by the shared ReferenceResolver ----
 
     /** The bytes entry a key source names; a resolution error if it is missing, a reference, a format entry or broken. */
     private Entry keyEntry(String key) {
@@ -1107,52 +832,29 @@ public final class VzipArchive implements ReferenceStore {
         return e;
     }
 
-    /** Bytes {@code [from, to)} of a key source's value. */
-    private byte[] keySourceBytes(String key, long from, long to, Map<String, byte[]> held) {
-        BytesEntry e = (BytesEntry) keyEntry(key);
-        Body body = e.body();
-        checkLength(body.usize(), to, "the key source " + key);
-        try {
-            if (body.method() == 8) {
-                byte[] v = held.get(key);
-                if (v == null) {
-                    v = bodyValue(body, Request.whole(), false);
-                    held.put(key, v);
-                }
-                return Arrays.copyOfRange(v, (int) from, (int) to);
-            }
-            return bodyValue(body, Request.range(from, to), false);
-        } catch (ReferenceException x) {
-            if (x.errorClass() == ErrorClass.REQUEST) {
-                throw x;
-            }
-            throw new ReferenceException(ErrorClass.RESOLUTION, "the key source " + key + ": " + x.detail(), x);
-        }
-    }
+    /** The bytes value a key source names, which a compressed entry holds whole (rule 5) and a stored one reads by window. */
+    private ReferenceResolver.KeyValue openKey(String key) {
+        Body body = ((BytesEntry) keyEntry(key)).body();
+        return new ReferenceResolver.KeyValue() {
+            private byte[] whole;
 
-    /** Bytes {@code [from, to)} of a url source: resolved against the store's URI, checked against the policy and the source's pins. */
-    private byte[] readUrl(int idx, long from, long to) {
-        Messages.Source src = sources.get(idx);
-        UriRef url;
-        synchronized (resolvedUrls) {
-            url = resolvedUrls.get(idx);
-        }
-        if (url == null) {
-            try {
-                url = base.resolve(UriRef.parse(src.text()));
-            } catch (IllegalArgumentException e) {
-                throw new ReferenceException(ErrorClass.RESOLUTION, "source " + idx + ": " + e.getMessage());
+            public long size() {
+                return body.usize();
             }
-            synchronized (resolvedUrls) {
-                resolvedUrls.put(idx, url);
+
+            public long held() {
+                return body.method() == 8 ? Math.max(body.usize(), body.csize()) : -1;
             }
-        }
-        Pins pins = new Pins(src.size(), src.etag(), src.modifiedNotAfter());
-        Policy.Allowed allowed = policy.check(url);
-        return switch (url.lowerScheme()) {
-            case "file" -> FileReader.read(url, from, to, pins, allowed);
-            case "http", "https" -> http.range(url, from, to, pins, null, policy.maxBytesPerGet()).bytes();
-            default -> throw new ReferenceException(ErrorClass.RESOLUTION, url + ": the scheme " + url.lowerScheme() + " is not read");
+
+            public synchronized byte[] read(long from, long to) {
+                if (body.method() == 8) {
+                    if (whole == null) {
+                        whole = bodyValue(body, Request.whole(), false);
+                    }
+                    return Arrays.copyOfRange(whole, (int) from, (int) to);
+                }
+                return bodyValue(body, Request.range(from, to), false);
+            }
         };
     }
 }

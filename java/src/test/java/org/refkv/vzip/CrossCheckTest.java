@@ -59,6 +59,14 @@ class CrossCheckTest {
         }
     }
 
+    private static byte[] nativeOrNull(PhkvStore s, String key) {
+        try {
+            return s.unsafeNativeGet(key);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     private static byte[] getOrNull(ReferenceStore s, String key) {
         try {
             return s.get(key);
@@ -68,7 +76,7 @@ class CrossCheckTest {
     }
 
     @Test
-    void theJavaVzipReaderAgreesWithTheRustPhkvReader() throws Exception {
+    void theJavaVzipReaderAgreesWithThePhkvReaderAndTheNativeResolver() throws Exception {
         Policy policy = Policy.filesBelow(FIXTURES);
         int converted = 0, keys = 0, references = 0, bothFailed = 0;
         for (Path in : candidates()) {
@@ -77,7 +85,7 @@ class CrossCheckTest {
                 continue;
             }
             converted++;
-            try (VzipArchive vzip = VzipArchive.open(archive, policy); PhkvStore phkv = PhkvStore.open(archive.toString())) {
+            try (VzipArchive vzip = VzipArchive.open(archive, policy); PhkvStore phkv = PhkvStore.open(archive.toString(), policy)) {
                 List<String> vk = vzip.list("");
                 assertEquals(phkv.list(""), vk, in + ": the same keys, in the same order");
                 for (String k : vk) {
@@ -87,27 +95,30 @@ class CrossCheckTest {
                     if (vzip.classify(k) == ReferenceStore.Kind.REFERENCE) {
                         references++;
                     }
-                    byte[] a = getOrNull(vzip, k), b = getOrNull(phkv, k);
-                    if (a == null && b == null) {
+                    // three resolvers: Java over the vzip directory, Java over the Rust phkv reader, and the Rust resolver itself
+                    byte[] a = getOrNull(vzip, k), b = getOrNull(phkv, k), c = nativeOrNull(phkv, k);
+                    if (a == null && b == null && c == null) {
                         bothFailed++;
                         continue;
                     }
-                    assertNotNull(a, what + ": the Java reader failed where the Rust one did not");
-                    assertNotNull(b, what + ": the Rust reader failed where the Java one did not");
-                    assertArrayEquals(b, a, what);
-                    assertEquals(b.length, vzip.size(k), what + " size");
+                    assertNotNull(a, what + ": the Java vzip reader failed where another did not");
+                    assertNotNull(b, what + ": the Java phkv reader failed where another did not");
+                    assertNotNull(c, what + ": the native resolver failed where another did not");
+                    assertArrayEquals(c, a, what + " (vzip against the native resolver)");
+                    assertArrayEquals(c, b, what + " (phkv against the native resolver)");
+                    assertEquals(c.length, vzip.size(k), what + " size");
                     assertEquals(phkv.size(k), vzip.size(k), what + " size");
                     if (a.length > 3) {
-                        assertArrayEquals(phkv.get(k, 1, a.length - 3), vzip.get(k, 1, a.length - 3), what + " range");
+                        assertArrayEquals(vzip.get(k, 1, a.length - 3), phkv.get(k, 1, a.length - 3), what + " range");
                     }
                 }
                 assertNull(vzip.get("no/such/key"));
-                assertEquals(phkv.get("no/such/key"), vzip.get("no/such/key"));
+                assertNull(phkv.get("no/such/key"));
             }
         }
         assertTrue(converted >= 6, "only " + converted + " fixtures were zarrified; the check proves little");
         assertTrue(references > 0, "no reference was compared");
-        System.out.printf("cross-checked %d archives, %d keys (%d references); %d keys failed in both readers%n", converted, keys, references, bothFailed);
+        System.out.printf("cross-checked %d archives, %d keys (%d references); %d keys failed in all three readers%n", converted, keys, references, bothFailed);
     }
 
     @Test
