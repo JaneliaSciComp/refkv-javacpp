@@ -1,43 +1,24 @@
 //! Resolution of `url` sources for `refkv_phkv_get`: `file:` URLs from disk, `http(s)` URLs by range
 //! requests under the reader policy (spec/refkv.md section 6.7), a url source's relative reference
 //! against the archive's own URI (section 5), and its size pin checked (spec/refkv.md section 5.1).
-use crate::{http, store};
+use crate::{filemap, http};
 use refkv_phkv::Resolver;
 use refkv_vzip::pb::Source;
 use refkv_vzip::uri;
-use std::fs::File;
 use std::sync::Arc;
 
 pub struct HostResolver {
     /// the archive's URI, which relative references are resolved against
     pub base: String,
     pub client: Arc<http::Client>,
+    /// whether a `file:` URL may name a UNC server (Windows only; an unsafe setting)
+    pub allow_file_hosts: bool,
 }
 
 impl HostResolver {
-    fn read_file(&self, url: &str, offset: u64, length: u64, pin: Option<u64>) -> Result<Vec<u8>, String> {
-        let parts = uri::split(url);
-        if parts.authority.is_some_and(|a| !a.is_empty() && a != "localhost") {
-            return Err(format!("{url}: a file URL with a host"));
-        }
-        let path = String::from_utf8(store::percent_decode(parts.path)).map_err(|_| format!("{url}: a path that is not UTF-8"))?;
-        let f = File::open(&path).map_err(|e| format!("{path}: {e}"))?;
-        let size = f.metadata().map_err(|e| format!("{path}: {e}"))?.len();
-        if let Some(p) = pin
-            && p != size
-        {
-            return Err(format!("{url}: pinned to {p} bytes, but has {size}"));
-        }
-        let mut buf = vec![0u8; usize::try_from(length).map_err(|_| "range too long".to_string())?];
-        #[cfg(unix)]
-        std::os::unix::fs::FileExt::read_exact_at(&f, &mut buf, offset).map_err(|e| format!("{path}: {e}"))?;
-        #[cfg(not(unix))]
-        {
-            use std::io::{Read, Seek, SeekFrom};
-            let mut f = f;
-            f.seek(SeekFrom::Start(offset)).and_then(|_| f.read_exact(&mut buf)).map_err(|e| format!("{path}: {e}"))?;
-        }
-        Ok(buf)
+    fn read_file(&self, url: &str, offset: u64, length: u64, source: &Source) -> Result<Vec<u8>, String> {
+        let pins = filemap::FilePins { size: source.size, etag: source.etag.clone(), modified_not_after: source.modified_not_after };
+        filemap::read_file(url, self.allow_file_hosts, offset, length, &pins)
     }
 
     fn read_http(&self, url: &str, offset: u64, length: u64, pin: Option<u64>) -> Result<Vec<u8>, String> {
@@ -67,7 +48,7 @@ impl Resolver for HostResolver {
         let reference = source.url_str().ok_or("not a url source")?;
         let url = uri::resolve(&self.base, reference)?;
         match uri::split(&url).scheme.map(|s| s.to_ascii_lowercase()).as_deref() {
-            Some("file") => self.read_file(&url, offset, length, source.size),
+            Some("file") => self.read_file(&url, offset, length, source),
             Some("http" | "https") => self.read_http(&url, offset, length, source.size),
             _ => Err(format!("{url}: only file, http and https sources are read")),
         }

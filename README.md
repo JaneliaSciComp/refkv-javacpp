@@ -78,11 +78,19 @@ Known limits:
   depend on addresses.
 - **Windows paths are implemented but not run on Windows.** `file:` URLs map to drive-letter paths
   (`file:///C:/data/x` is `C:\data\x`) and, with `allowFileHosts`, to UNC paths (`file://server/share/x`), as
-  spec/refkv.md section 5 says; `file:///data/x` is an error there, since it names no drive. The rules are pure string
-  functions, tested on every system, but the step that opens the file was only exercised on macOS, so a Windows CI job is
-  still wanted. `allowFileHosts` is unsafe (reading a UNC path connects to the server, which may send the user's
-  credentials) and does not confine a store to its share: `../..` can name another share of the same server, so confine
-  it with a `prefix`. The native phkv reader (`capi/src/resolver.rs`) has no Windows mapping yet.
+  spec/refkv.md section 5 says; `file:///data/x` is an error there, since it names no drive. Both the Java reader
+  (`UriRef`) and the native one (`capi/src/filemap.rs`) have the rules as pure string functions, tested on every system
+  (`pixi run test`, `pixi run capi-test`); the Rust read branch for non-Unix systems was compiled and run on macOS with
+  its cfg swapped. The step that opens a file on Windows itself was never run, so a Windows CI job is still wanted.
+  `allowFileHosts` is unsafe (reading a UNC path connects to the server, which may send the user's credentials) and
+  does not confine a store to its share: `../..` can name another share of the same server, so confine it with a `prefix`.
+- **`PhkvStore`'s resolver is weaker than `VzipArchive`'s.** References of a phkv store are resolved in `capi/src/resolver.rs`,
+  which has: no scheme policy (it reads any `file:` source a store names, and refuses `http(s)` only by address);
+  for `http(s)`, a size pin that is checked only when the response happens to give a total, `etag` and
+  `modified_not_after` pins that are ignored (the spec says pins fail closed), no redirects, and no validation of
+  `Content-Range`. `file:` sources are held to the spec (path rules, and every pin). **Prefer `VzipArchive` for a store
+  you do not trust**, or zarrify to a vzip archive or a hybrid and open that. The fix is to resolve a phkv store's
+  references in Java, with the same code as `VzipArchive`, from the payload `fetch` already returns.
 - A reference's reads are made one after another, and reads of different `get`s are not combined.
 - A Java array holds 2^31 - 1 bytes, so `maxBytesPerGet` defaults to just under that, not the spec's 2^31.
 

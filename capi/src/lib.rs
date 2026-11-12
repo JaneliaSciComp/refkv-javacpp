@@ -28,6 +28,7 @@ mod vsi;
 #[path = "../../refkv/rust/refkv-cli/src/xml.rs"]
 mod xml;
 mod convert;
+pub mod filemap;
 mod resolver;
 
 use refkv_phkv::{EntryInfo, Fetched, Kind, Request, Store};
@@ -344,6 +345,7 @@ pub struct RefkvPhkv {
     /// the file's URI: what relative url sources are resolved against
     base: String,
     client: Mutex<std::sync::Arc<http::Client>>,
+    allow_file_hosts: std::sync::atomic::AtomicBool,
 }
 
 unsafe fn store_of<'a>(s: *const RefkvPhkv) -> Result<std::sync::MutexGuard<'a, Store<File>>, Failure> {
@@ -371,7 +373,7 @@ pub unsafe extern "C" fn refkv_phkv_open(path: *const c_char, out: *mut *mut Ref
         let f = File::open(p).map_err(|e| error(format!("{p}: {e}")))?;
         let s = Store::open(f).map_err(read_err)?;
         let base = refkv_vzip::uri::file_uri(std::path::Path::new(p)).map_err(error)?;
-        let handle = RefkvPhkv { store: Mutex::new(s), base, client: Mutex::new(new_client(false)) };
+        let handle = RefkvPhkv { store: Mutex::new(s), base, client: Mutex::new(new_client(false)), allow_file_hosts: false.into() };
         unsafe { *out = Box::into_raw(Box::new(handle)) };
         Ok(REFKV_OK)
     })
@@ -397,6 +399,18 @@ pub unsafe extern "C" fn refkv_phkv_set_allow_private_hosts(s: *const RefkvPhkv,
     guard(|| {
         let s = unsafe { handle(s, "store") }?;
         *s.client.lock().unwrap_or_else(|e| e.into_inner()) = new_client(on);
+        Ok(REFKV_OK)
+    })
+}
+
+/// UNSAFE, Windows only: lets `refkv_phkv_get` read a `file:` source that names a UNC server (`file://server/share/x`).
+/// Reading one connects to that server, which may send it the user's credentials. By default it refuses them
+/// (spec/refkv.md section 5). On other systems such a URL has no mapping and is refused whatever this is set to.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn refkv_phkv_set_allow_file_hosts(s: *const RefkvPhkv, on: bool) -> i32 {
+    guard(|| {
+        let s = unsafe { handle(s, "store") }?;
+        s.allow_file_hosts.store(on, std::sync::atomic::Ordering::Relaxed);
         Ok(REFKV_OK)
     })
 }
@@ -511,6 +525,11 @@ pub unsafe extern "C" fn refkv_phkv_entry_info(s: *const RefkvPhkv, key: *const 
     })
 }
 
+/// UNCHECKED, for cross-checking a host's own resolution: no reader policy applies to `file:` sources (any a store names
+/// is read), and over http(s) only a size pin is checked, and only if the response gives a total; `etag` and
+/// `modified_not_after` pins are ignored, redirects are not followed and `Content-Range` is not validated. A host
+/// should resolve references itself, from `refkv_phkv_fetch`, `refkv_phkv_sources` and `refkv_phkv_key_bytes`.
+///
 /// Like `refkv_phkv_fetch`, but a reference is resolved: its ranges are read from the sources the
 /// store names (`file:` and `http(s)` URLs, relative ones against the store's file, other keys of
 /// the store, and literal data), and checked against their pins and checksums. Returns
@@ -531,7 +550,11 @@ pub unsafe extern "C" fn refkv_phkv_get(s: *const RefkvPhkv, key: *const c_char,
             n => return Err(usage(format!("{n} is not a REFKV_REQUEST_*"))),
         };
         let h = unsafe { handle(s, "store") }?;
-        let resolver = resolver::HostResolver { base: h.base.clone(), client: h.client.lock().unwrap_or_else(|e| e.into_inner()).clone() };
+        let resolver = resolver::HostResolver {
+            base: h.base.clone(),
+            client: h.client.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            allow_file_hosts: h.allow_file_hosts.load(std::sync::atomic::Ordering::Relaxed),
+        };
         let store = h.store.lock().unwrap_or_else(|e| e.into_inner());
         Ok(match store.get(key, req, &resolver).map_err(read_err)? {
             None => REFKV_MISSING,
@@ -540,6 +563,63 @@ pub unsafe extern "C" fn refkv_phkv_get(s: *const RefkvPhkv, key: *const c_char,
                 REFKV_BYTES
             }
         })
+    })
+}
+
+/// The store's source table (spec/refkv.md section 5), encoded as a `SourceTable` message, for a host that resolves
+/// references itself: with `refkv_phkv_fetch`, which gives a reference's payload, and `refkv_phkv_key_found` and
+/// `refkv_phkv_key_bytes`, which read the `key` sources it names. Free the buffer with `refkv_buffer_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn refkv_phkv_sources(s: *const RefkvPhkv, out: *mut *mut RefkvBuffer) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return Err(usage("out is NULL"));
+        }
+        let s = unsafe { store_of(s) }?;
+        let table = refkv_vzip::pb::encode_source_table(s.sources().iter(), s.revision());
+        unsafe { *out = buffer(table, 0) };
+        Ok(REFKV_OK)
+    })
+}
+
+/// Looks up the bytes value that a `key` source names, hidden or not, for one `get` (spec/refkv.md section 6.7 rule 5).
+/// `REFKV_OK`, with `*size` its size and `*held` the bytes that reading a window of it holds in memory (the larger of
+/// its size and its stored bytes) when the reader holds it whole, which it does for a compressed or inline value, or
+/// `UINT64_MAX` when a window is read by itself; or `REFKV_MISSING` if the key is missing or is a reference.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn refkv_phkv_key_found(s: *const RefkvPhkv, key: *const c_char, size: *mut u64, held: *mut u64) -> i32 {
+    guard(|| {
+        let key = unsafe { str_arg(key, "key") }?;
+        if size.is_null() || held.is_null() {
+            return Err(usage("size or held is NULL"));
+        }
+        let s = unsafe { store_of(s) }?;
+        Ok(match s.key_found(key).map_err(read_err)? {
+            None => REFKV_MISSING,
+            Some(f) => {
+                unsafe {
+                    *size = f.size;
+                    *held = f.held.unwrap_or(u64::MAX);
+                }
+                REFKV_OK
+            }
+        })
+    })
+}
+
+/// Bytes `[start, end)` of the bytes value at `key`, hidden or not: what a `key` source of a range reads. Every failure
+/// is a failure of the read, which the host reports as a resolution error. Free the buffer with `refkv_buffer_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn refkv_phkv_key_bytes(s: *const RefkvPhkv, key: *const c_char, start: u64, end: u64, out: *mut *mut RefkvBuffer) -> i32 {
+    guard(|| {
+        let key = unsafe { str_arg(key, "key") }?;
+        if out.is_null() {
+            return Err(usage("out is NULL"));
+        }
+        let s = unsafe { store_of(s) }?;
+        let bytes = s.key_bytes(key, start, end).map_err(read_err)?;
+        unsafe { *out = buffer(bytes, 0) };
+        Ok(REFKV_OK)
     })
 }
 

@@ -210,6 +210,12 @@ public static native @Cast("uint64_t") long refkv_phkv_key_count(@Const RefkvPhk
 // By default it refuses them (spec/refkv.md section 6.7).
 public static native @Cast("int32_t") int refkv_phkv_set_allow_private_hosts(@Const RefkvPhkv s, @Cast("bool") boolean on);
 
+// UNSAFE, Windows only: lets `refkv_phkv_get` read a `file:` source that names a UNC server (`file://server/share/x`).
+// Reading one connects to that server, which may send it the user's credentials. By default it refuses them
+// (spec/refkv.md section 5). On other systems such a URL has no mapping and is refused whatever this is set to.
+public static native @Cast("int32_t") int refkv_phkv_set_allow_file_hosts(@Const RefkvPhkv s,
+                                        @Cast("bool") boolean on);
+
 // The kind of the value at `key`: `REFKV_MISSING`, `REFKV_BYTES` or `REFKV_REFERENCE`, or a failure.
 public static native @Cast("int32_t") int refkv_phkv_classify(@Const RefkvPhkv s,
                             @Cast("const char*") BytePointer key);
@@ -275,6 +281,11 @@ public static native @Cast("int32_t") int refkv_phkv_entry_info(@Const RefkvPhkv
                               String key,
                               @Cast("char**") @ByPtrPtr byte[] json);
 
+// UNCHECKED, for cross-checking a host's own resolution: no reader policy applies to `file:` sources (any a store names
+// is read), and over http(s) only a size pin is checked, and only if the response gives a total; `etag` and
+// `modified_not_after` pins are ignored, redirects are not followed and `Content-Range` is not validated. A host
+// should resolve references itself, from `refkv_phkv_fetch`, `refkv_phkv_sources` and `refkv_phkv_key_bytes`.
+//
 // Like `refkv_phkv_fetch`, but a reference is resolved: its ranges are read from the sources the
 // store names (`file:` and `http(s)` URLs, relative ones against the store's file, other keys of
 // the store, and literal data), and checked against their pins and checksums. Returns
@@ -298,6 +309,61 @@ public static native @Cast("int32_t") int refkv_phkv_get(@Const RefkvPhkv s,
                        @Cast("uint64_t") long a,
                        @Cast("uint64_t") long b,
                        @ByPtrPtr RefkvBuffer out);
+
+// The store's source table (spec/refkv.md section 5), encoded as a `SourceTable` message, for a host that resolves
+// references itself: with `refkv_phkv_fetch`, which gives a reference's payload, and `refkv_phkv_key_found` and
+// `refkv_phkv_key_bytes`, which read the `key` sources it names. Free the buffer with `refkv_buffer_free`.
+public static native @Cast("int32_t") int refkv_phkv_sources(@Const RefkvPhkv s,
+                           @Cast("RefkvBuffer**") PointerPointer out);
+public static native @Cast("int32_t") int refkv_phkv_sources(@Const RefkvPhkv s,
+                           @ByPtrPtr RefkvBuffer out);
+
+// Looks up the bytes value that a `key` source names, hidden or not, for one `get` (spec/refkv.md section 6.7 rule 5).
+// `REFKV_OK`, with `*size` its size and `*held` the bytes that reading a window of it holds in memory (the larger of
+// its size and its stored bytes) when the reader holds it whole, which it does for a compressed or inline value, or
+// `UINT64_MAX` when a window is read by itself; or `REFKV_MISSING` if the key is missing or is a reference.
+public static native @Cast("int32_t") int refkv_phkv_key_found(@Const RefkvPhkv s,
+                             @Cast("const char*") BytePointer key,
+                             @Cast("uint64_t*") LongPointer size,
+                             @Cast("uint64_t*") LongPointer held);
+public static native @Cast("int32_t") int refkv_phkv_key_found(@Const RefkvPhkv s,
+                             String key,
+                             @Cast("uint64_t*") LongBuffer size,
+                             @Cast("uint64_t*") LongBuffer held);
+public static native @Cast("int32_t") int refkv_phkv_key_found(@Const RefkvPhkv s,
+                             @Cast("const char*") BytePointer key,
+                             @Cast("uint64_t*") long[] size,
+                             @Cast("uint64_t*") long[] held);
+public static native @Cast("int32_t") int refkv_phkv_key_found(@Const RefkvPhkv s,
+                             String key,
+                             @Cast("uint64_t*") LongPointer size,
+                             @Cast("uint64_t*") LongPointer held);
+public static native @Cast("int32_t") int refkv_phkv_key_found(@Const RefkvPhkv s,
+                             @Cast("const char*") BytePointer key,
+                             @Cast("uint64_t*") LongBuffer size,
+                             @Cast("uint64_t*") LongBuffer held);
+public static native @Cast("int32_t") int refkv_phkv_key_found(@Const RefkvPhkv s,
+                             String key,
+                             @Cast("uint64_t*") long[] size,
+                             @Cast("uint64_t*") long[] held);
+
+// Bytes `[start, end)` of the bytes value at `key`, hidden or not: what a `key` source of a range reads. Every failure
+// is a failure of the read, which the host reports as a resolution error. Free the buffer with `refkv_buffer_free`.
+public static native @Cast("int32_t") int refkv_phkv_key_bytes(@Const RefkvPhkv s,
+                             @Cast("const char*") BytePointer key,
+                             @Cast("uint64_t") long start,
+                             @Cast("uint64_t") long end,
+                             @Cast("RefkvBuffer**") PointerPointer out);
+public static native @Cast("int32_t") int refkv_phkv_key_bytes(@Const RefkvPhkv s,
+                             @Cast("const char*") BytePointer key,
+                             @Cast("uint64_t") long start,
+                             @Cast("uint64_t") long end,
+                             @ByPtrPtr RefkvBuffer out);
+public static native @Cast("int32_t") int refkv_phkv_key_bytes(@Const RefkvPhkv s,
+                             String key,
+                             @Cast("uint64_t") long start,
+                             @Cast("uint64_t") long end,
+                             @ByPtrPtr RefkvBuffer out);
 
 // The size in bytes of the value at `key`, as `refkv_phkv_get` would give it whole, without reading
 // it: a bytes value's size, or the sum of a reference's ranges. `REFKV_MISSING` (`*size` unset) or

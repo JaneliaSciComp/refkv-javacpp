@@ -142,6 +142,15 @@ public final class PhkvStore implements ReferenceStore {
         read(h -> Native.check(refkv_phkv_set_allow_private_hosts(h, on)));
     }
 
+    /**
+     * UNSAFE, Windows only: allows reading a {@code file:} source that names a UNC server ({@code file://server/share/x}).
+     * Reading one connects to that server, which may send it the user's credentials. On other systems such a URL has
+     * no mapping and is refused whatever this is set to.
+     */
+    public void allowFileHosts(boolean on) {
+        read(h -> Native.check(refkv_phkv_set_allow_file_hosts(h, on)));
+    }
+
     @Override
     public void close() {
         lock.writeLock().lock();

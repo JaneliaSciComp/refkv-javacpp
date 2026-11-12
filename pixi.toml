@@ -8,6 +8,7 @@ version = "0.1.0"
 [tasks]
 # the C ABI over refkv's Rust core: capi/target/release/librefkv_capi.* and capi/include/refkv.h
 capi = { cmd = "cargo build --release --manifest-path capi/Cargo.toml", description = "Build the C ABI shim and its header" }
+capi-test = { cmd = "cargo test --release --manifest-path capi/Cargo.toml", description = "Test the C ABI shim's pure functions (file: URL mapping, file pins)" }
 # the JavaCPP parser: capi/include/refkv.h -> java/src/main/java/org/refkv/javacpp/global/refkv.java (committed)
 java-gen = { cmd = "mkdir -p target/presets && javac -cp target/deps/javacpp-1.5.14.jar -d target/presets src/main/java/org/refkv/javacpp/RefkvPresets.java && java -jar target/deps/javacpp-1.5.14.jar -nocompile -cp target/presets -d src/main/java -Dplatform.includepath=$PWD/../capi/include org.refkv.javacpp.RefkvPresets", cwd = "java", depends-on = ["capi", "java-deps"], description = "Regenerate the raw JavaCPP bindings from the header" }
 java-deps = { cmd = "mvn -q -B dependency:copy-dependencies -DoutputDirectory=target/deps", cwd = "java" }

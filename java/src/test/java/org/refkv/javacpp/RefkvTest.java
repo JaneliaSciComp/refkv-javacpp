@@ -57,6 +57,9 @@ class RefkvTest {
             assertEquals(10, s.get("0/c/1/0", ROWS * WIDTH - 10, 500).length, "a range is clipped to the value's end");
             assertNull(s.get("nope"));
             assertTrue(new String(s.get("zarr.json")).contains("\"zarr_format\":3"));
+            s.allowFileHosts(true); // an unsafe setting that changes nothing for a source with no host
+            assertArrayEquals(chunk(0), s.get("0/c/0/0"));
+            s.allowFileHosts(false);
             List<String> keys = s.list("0/");
             assertEquals(List.of("0/c/0/0", "0/c/1/0", "0/zarr.json"), keys);
             assertEquals(s.keyCount(), s.list("").size() + 0L);

@@ -345,6 +345,7 @@ dependencies = [
  "refkv-phkv",
  "refkv-vzip",
  "serde_json",
+ "tempfile",
  "ureq",
 ]
 
