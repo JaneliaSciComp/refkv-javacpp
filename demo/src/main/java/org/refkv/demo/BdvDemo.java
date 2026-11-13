@@ -90,7 +90,9 @@ public final class BdvDemo {
 
     public static void main(String[] args) throws Exception {
         Options o = Options.parse(args);
-        try (VzipArchive archive = open(o)) {
+        VzipArchive archive = open(o);
+        boolean viewerOpen = false;
+        try {
             N5Reader n5 = new ZarrV3KeyValueReader(new RefkvKeyValueAccess(archive), "", new GsonBuilder(), false);
             Image image = Image.find(archive, n5);
             System.out.println(image);
@@ -107,10 +109,32 @@ public final class BdvDemo {
                 return;
             }
             BdvStackSource<?> viewer = show(n5, image);
+            viewerOpen = true;
+            // main returns now, and the window goes on loading blocks from the archive, so the archive stays open until the
+            // window is closed
+            java.awt.Window window = javax.swing.SwingUtilities.getWindowAncestor(viewer.getBdvHandle().getViewerPanel());
+            window.addWindowListener(new java.awt.event.WindowAdapter() {
+                @Override
+                public void windowClosed(java.awt.event.WindowEvent e) {
+                    archive.close();
+                    System.exit(0);
+                }
+            });
             if (o.screenshot() != null) {
-                screenshot(viewer, o.screenshot(), o.waitSeconds());
-                viewer.close();
-                System.exit(0); // the loader threads would keep the JVM alive
+                Thread shot = new Thread(() -> {
+                    try {
+                        screenshot(viewer, o.screenshot(), o.waitSeconds());
+                        viewer.close(); // closes the window, which closes the archive and ends the program
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        System.exit(1);
+                    }
+                }, "screenshot");
+                shot.start();
+            }
+        } finally {
+            if (!viewerOpen) {
+                archive.close();
             }
         }
     }
