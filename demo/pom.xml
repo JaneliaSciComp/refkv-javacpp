@@ -25,6 +25,8 @@
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <n5-zarr.version>2.0.2-rectilinear.1</n5-zarr.version>
+    <ffmpeg.version>8.1.2-1.5.14</ffmpeg.version>
   </properties>
 
   <repositories>
@@ -60,7 +62,21 @@
     <dependency>
       <groupId>org.janelia.saalfeldlab</groupId>
       <artifactId>n5-zarr</artifactId>
-      <version>2.0.2</version>
+      <!-- 2.0.2 is the release. Videos are on rectilinear chunk grids, which the fork has: it is installed from
+           the rectilinear-chunk-grid branch as 2.0.2-rectilinear.1 (see README) -->
+      <version>${n5-zarr.version}</version>
+    </dependency>
+    <!-- FFmpeg decodes the pictures of a video (the refkv.stream codec) -->
+    <dependency>
+      <groupId>org.bytedeco</groupId>
+      <artifactId>ffmpeg</artifactId>
+      <version>${ffmpeg.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.bytedeco</groupId>
+      <artifactId>ffmpeg</artifactId>
+      <version>${ffmpeg.version}</version>
+      <classifier>${ffmpeg.native}</classifier>
     </dependency>
     <!-- n5-blosc's jblosc brings JNA 4.2.2, whose macOS native stub is x86 only and cannot start on Apple Silicon -->
     <dependency>
@@ -84,6 +100,29 @@
       <version>1.0.0-beta-36</version>
     </dependency>
   </dependencies>
+
+  <profiles>
+    <profile>
+      <id>ffmpeg-macosx-arm64</id>
+      <activation><os><family>mac</family><arch>aarch64</arch></os></activation>
+      <properties><ffmpeg.native>macosx-arm64</ffmpeg.native></properties>
+    </profile>
+    <profile>
+      <id>ffmpeg-macosx-x86_64</id>
+      <activation><os><family>mac</family><arch>x86_64</arch></os></activation>
+      <properties><ffmpeg.native>macosx-x86_64</ffmpeg.native></properties>
+    </profile>
+    <profile>
+      <id>ffmpeg-windows-x86_64</id>
+      <activation><os><family>windows</family></os></activation>
+      <properties><ffmpeg.native>windows-x86_64</ffmpeg.native></properties>
+    </profile>
+    <profile>
+      <id>ffmpeg-linux-x86_64</id>
+      <activation><os><family>unix</family><name>Linux</name></os></activation>
+      <properties><ffmpeg.native>linux-x86_64</ffmpeg.native></properties>
+    </profile>
+  </profiles>
 
   <build>
     <plugins>

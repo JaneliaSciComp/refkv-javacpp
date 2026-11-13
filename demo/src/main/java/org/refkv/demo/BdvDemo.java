@@ -225,7 +225,38 @@ public final class BdvDemo {
                 String array = (group.isEmpty() ? "" : group + "/") + level0.get("path").getAsString();
                 return new Image(group, array, axes, scale, channels, ms.has("name") ? ms.get("name").getAsString() : null);
             }
-            throw new IllegalArgumentException("the archive holds no OME-NGFF image");
+            Image video = findVideo(archive);
+            if (video != null) {
+                return video;
+            }
+            throw new IllegalArgumentException("the archive holds no OME-NGFF image and no video");
+        }
+
+        /**
+         * The brightness (Y) plane of the first video of the archive: an array of pictures, (frame, y, x), that the {@code refkv.stream}
+         * codec decodes. The frames are shown as the slices of a stack, which the viewer's z slider steps through.
+         */
+        static Image findVideo(ReferenceStore archive) {
+            for (String key : archive.list("")) {
+                if (!key.endsWith("/zarr.json") || key.startsWith("refkv_source/")) {
+                    continue;
+                }
+                JsonObject node = JsonParser.parseString(new String(archive.get(key), StandardCharsets.UTF_8)).getAsJsonObject();
+                if (!node.has("node_type") || !node.get("node_type").getAsString().equals("array") || !node.has("codecs")) {
+                    continue;
+                }
+                for (JsonElement c : node.getAsJsonArray("codecs")) {
+                    JsonObject codec = c.getAsJsonObject();
+                    if (codec.get("name").getAsString().equals("refkv.stream") && codec.has("configuration")
+                            && "y".equals(codec.getAsJsonObject("configuration").has("plane")
+                                    ? codec.getAsJsonObject("configuration").get("plane").getAsString() : null)) {
+                        String array = key.substring(0, key.length() - "/zarr.json".length());
+                        return new Image(array.substring(0, array.lastIndexOf('/')), array, List.of("z", "y", "x"), new double[] {1, 1, 1},
+                                List.of(new Channel("Y (brightness)", 0xFFFFFFFF, 0, 255)), "video " + array);
+                    }
+                }
+            }
+            return null;
         }
 
         /** Reads one block from the file, to show what a viewer will do. */
