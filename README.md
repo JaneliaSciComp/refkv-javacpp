@@ -146,6 +146,13 @@ pixi run demo "--screenshot out.png --wait 45"        # open the viewer, wait 45
 
 Relative paths are relative to the repository root.
 
+A video (an MP4, whose archive has no OME-NGFF image) opens as a stack of its brightness plane, with the viewer's z slider as
+the frame. Video needs two things that are not in this repository: the
+[n5-refkv-stream](https://github.com/JaneliaSciComp/n5-refkv-stream) codec, installed once with `mvn install -DskipTests` in
+its clone, and, for a video of more than a few hundred frames, whose chunks differ in length, an n5-zarr with the rectilinear
+chunk grid ([saalfeldlab/n5-zarr#104](https://github.com/saalfeldlab/n5-zarr/pull/104)); the demo uses the build of that
+branch installed as `2.0.2-rectilinear.1`.
+
 What happens on the default image: zarrify reads about 250 KB of the file, in 12 requests and about 4 seconds, and writes an
 archive of 18.5 KB. The archive's metadata gives BigDataViewer the voxel size (0.205 x 0.205 x 0.35 micrometers) and three
 named, coloured, windowed channels (TagYFP, mRFP1.2, TL DIC). Pixels are read one plane at a time (672 x 512, 688 KB), and

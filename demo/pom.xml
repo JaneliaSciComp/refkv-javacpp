@@ -66,11 +66,11 @@
            the rectilinear-chunk-grid branch as 2.0.2-rectilinear.1 (see README) -->
       <version>${n5-zarr.version}</version>
     </dependency>
-    <!-- FFmpeg decodes the pictures of a video (the refkv.stream codec) -->
+    <!-- the refkv.stream codec, which decodes the pictures of a video with FFmpeg: JaneliaSciComp/n5-refkv-stream -->
     <dependency>
-      <groupId>org.bytedeco</groupId>
-      <artifactId>ffmpeg</artifactId>
-      <version>${ffmpeg.version}</version>
+      <groupId>org.refkv</groupId>
+      <artifactId>n5-refkv-stream</artifactId>
+      <version>0.1.0-SNAPSHOT</version>
     </dependency>
     <dependency>
       <groupId>org.bytedeco</groupId>
