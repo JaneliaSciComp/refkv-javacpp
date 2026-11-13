@@ -57,6 +57,13 @@
       <version>${n5-zarr.version}</version>
       <scope>test</scope>
     </dependency>
+    <!-- n5-blosc's jblosc brings JNA 4.2.2, whose macOS native stub is x86 only and cannot start on Apple Silicon -->
+    <dependency>
+      <groupId>net.java.dev.jna</groupId>
+      <artifactId>jna</artifactId>
+      <version>5.17.0</version>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>

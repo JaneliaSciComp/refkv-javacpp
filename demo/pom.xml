@@ -62,6 +62,12 @@
       <artifactId>n5-zarr</artifactId>
       <version>2.0.2</version>
     </dependency>
+    <!-- n5-blosc's jblosc brings JNA 4.2.2, whose macOS native stub is x86 only and cannot start on Apple Silicon -->
+    <dependency>
+      <groupId>net.java.dev.jna</groupId>
+      <artifactId>jna</artifactId>
+      <version>5.17.0</version>
+    </dependency>
     <dependency>
       <groupId>org.janelia.saalfeldlab</groupId>
       <artifactId>n5-imglib2</artifactId>

@@ -26,3 +26,10 @@ cmake = ">=4.4.5,<5"
 clangxx = ">=23.1.5,<24"
 git = ">=2.56.1,<3"
 rust = ">=1.99.1,<1.100"
+blosc = ">=1.21.7,<2"
+
+# jblosc (which n5-blosc uses) bundles no Blosc: it asks JNA to load libblosc, which the blosc package above provides in the
+# environment's lib directory. JNA only looks in its own library path, so tell it where; every JVM started in this environment,
+# Maven's forked test JVMs included, picks the flag up. On Windows the DLL is in Library\bin instead: not set here.
+[target.osx-arm64.activation.env]
+JAVA_TOOL_OPTIONS = "-Djna.library.path=$CONDA_PREFIX/lib"
