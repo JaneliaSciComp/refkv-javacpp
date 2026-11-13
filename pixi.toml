@@ -16,7 +16,7 @@ java-build = { cmd = "mvn -B -q package -DskipTests", cwd = "java", depends-on =
 # the BigDataViewer demo: `pixi run demo` opens the demo image; options go in one quoted argument, for example
 # `pixi run demo "--check"`, `pixi run demo "--preview docs/preview.png"`, or `pixi run demo "path/or/url/of/an/image --out my.vzip"`
 demo-install = { cmd = "mvn -B -q -f java/pom.xml install -DskipTests", depends-on = ["capi"], description = "Install the bindings where the demo finds them" }
-demo = { cmd = "mvn -B -q -f demo/pom.xml exec:exec -Dexec.executable=java -Dexec.args=\"--enable-native-access=ALL-UNNAMED -cp %classpath org.refkv.demo.BdvDemo {{ options }}\"", args = [{ arg = "options", default = "" }], depends-on = ["demo-install"], description = "Open an image in BigDataViewer through a refkv vzip archive" }
+demo = { cmd = "mvn -B -q -f demo/pom.xml compile exec:exec -Dexec.executable=java -Dexec.workingdir=$PIXI_PROJECT_ROOT -Dexec.args=\"--enable-native-access=ALL-UNNAMED -cp %classpath org.refkv.demo.BdvDemo {{ options }}\"", args = [{ arg = "options", default = "" }], depends-on = ["demo-install"], description = "Open an image in BigDataViewer through a refkv vzip archive" }
 test = { cmd = "mvn -B test", cwd = "java", depends-on = ["capi"], description = "Run the Java tests" }
 
 [dependencies]

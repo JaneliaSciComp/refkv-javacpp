@@ -41,12 +41,13 @@ import org.refkv.vzip.VzipArchive;
  * dataset, and the pixels are read from the original file, over HTTP, as BigDataViewer asks for them.
  *
  * <pre>
- * BdvDemo [source] [--out FILE.vzip] [--files-below DIR] [--check] [--preview FILE.png]
+ * BdvDemo [source] [--out FILE.vzip] [--files-below DIR] [--check] [--preview FILE.png] [--screenshot FILE.png [--wait SECONDS]]
  * </pre>
  *
  * {@code --check} reads one block and exits. {@code --preview} needs no display: it composites the middle z-plane of
  * every channel, with the channel colours and display windows the image's metadata gives, into a PNG, reading the
- * pixels the same way the viewer does. It is not BigDataViewer's rendering.
+ * pixels the same way the viewer does. It is not BigDataViewer's rendering. {@code --screenshot} does open the viewer, waits
+ * {@code --wait} seconds (40) for the blocks it shows to load, writes what its display shows to a PNG, and exits.
  *
  * <p>{@code source} is an archive ({@code .vzip}, a path or an http(s) URL) or an image to zarrify first (a path or an http(s)
  * URL of any format refkv knows). Local image files need {@code --files-below}, the directory the archive may read.
@@ -57,19 +58,22 @@ public final class BdvDemo {
             + "20150826-peter_thorpe/Stinger%20plates-extra%20images%20screen%20T34%20x%20TS-more%20repeats/"
             + "Plate1-Blue-A_TS-Stinger/Plate1-Blue-A-02-Scene-1-P2-E1-01.czi";
 
-    record Options(String source, Path out, Path filesBelow, boolean check, Path preview) {
+    record Options(String source, Path out, Path filesBelow, boolean check, Path preview, Path screenshot, int waitSeconds) {
         static Options parse(String[] args) {
             String source = DEFAULT_SOURCE;
-            Path out = null, below = null, shot = null;
+            Path out = null, below = null, shot = null, window = null;
             boolean check = false;
+            int wait = 40;
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
                     case "--out" -> out = Path.of(args[++i]);
                     case "--files-below" -> below = Path.of(args[++i]);
                     case "--preview" -> shot = Path.of(args[++i]);
+                    case "--screenshot" -> window = Path.of(args[++i]);
+                    case "--wait" -> wait = Integer.parseInt(args[++i]);
                     case "--check" -> check = true;
                     case "-h", "--help" -> {
-                        System.out.println("usage: BdvDemo [source] [--out FILE.vzip] [--files-below DIR] [--check] [--preview FILE.png]");
+                        System.out.println("usage: BdvDemo [source] [--out FILE.vzip] [--files-below DIR] [--check] [--preview FILE.png] [--screenshot FILE.png [--wait SECONDS]]");
                         System.exit(0);
                     }
                     default -> {
@@ -80,7 +84,7 @@ public final class BdvDemo {
                     }
                 }
             }
-            return new Options(source, out, below, check, shot);
+            return new Options(source, out, below, check, shot, window, wait);
         }
     }
 
@@ -102,7 +106,12 @@ public final class BdvDemo {
                 preview(n5, image, o.preview());
                 return;
             }
-            show(n5, image);
+            BdvStackSource<?> viewer = show(n5, image);
+            if (o.screenshot() != null) {
+                screenshot(viewer, o.screenshot(), o.waitSeconds());
+                viewer.close();
+                System.exit(0); // the loader threads would keep the JVM alive
+            }
         }
     }
 
@@ -129,8 +138,10 @@ public final class BdvDemo {
             return isUrl(source) ? VzipArchive.open(URI.create(source), policy) : VzipArchive.open(Path.of(source), policy);
         }
         Path out = o.out() != null ? o.out() : Files.createTempFile("refkv-demo-", ".vzip");
+        // a relative path would be recorded as a source relative to the archive, which is not where the file is: name it in full
+        String input = isUrl(source) ? source : Path.of(source).toAbsolutePath().normalize().toString();
         long t0 = System.nanoTime();
-        Zarrify.Result r = Zarrify.convert(source, out.toString());
+        Zarrify.Result r = Zarrify.convert(input, out.toString());
         System.out.printf("zarrified %s in %.1f s into %s (%d bytes), whatever its size%n", source, (System.nanoTime() - t0) / 1e9, out, Files.size(out));
         System.out.println("  " + r.summaryJson().replaceAll("\"planner\".*", "...").replaceAll("^\\{", "{").trim());
         return VzipArchive.open(out, policy);
@@ -273,7 +284,7 @@ public final class BdvDemo {
     }
 
     /** Opens BigDataViewer on the image: one source per channel, coloured, windowed and calibrated from the image's metadata. */
-    static void show(N5Reader n5, Image image) {
+    static BdvStackSource<?> show(N5Reader n5, Image image) {
         SharedQueue queue = new SharedQueue(Math.max(1, Runtime.getRuntime().availableProcessors() / 2));
         List<Double> voxel = new ArrayList<>();
         for (int i = image.axes().size() - 1; i >= 0; i--) {
@@ -306,6 +317,25 @@ public final class BdvDemo {
                 first = source;
             }
         }
+        return first;
+    }
+
+    /** Waits for the blocks in view to load, then writes what the viewer's display shows. */
+    static void screenshot(BdvStackSource<?> viewer, Path file, int waitSeconds) throws Exception {
+        var panel = viewer.getBdvHandle().getViewerPanel();
+        for (int i = 0; i < waitSeconds * 2; i++) {
+            Thread.sleep(500);
+            panel.requestRepaint(); // blocks arrive in the background, and the viewer redraws when asked
+        }
+        var display = panel.getDisplay();
+        BufferedImage image = new BufferedImage(Math.max(1, display.getWidth()), Math.max(1, display.getHeight()), BufferedImage.TYPE_INT_ARGB);
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            java.awt.Graphics2D g = image.createGraphics();
+            display.paint(g);
+            g.dispose();
+        });
+        javax.imageio.ImageIO.write(image, "png", file.toFile());
+        System.out.println("wrote " + file + " (" + image.getWidth() + " x " + image.getHeight() + "): what the viewer's display shows");
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})

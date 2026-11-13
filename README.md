@@ -140,8 +140,11 @@ pixi run demo                                         # the image above, in BigD
 pixi run demo "https://example.org/volume.vzip"       # an archive: a path or a URL
 pixi run demo "/data/image.nii --files-below /data"   # a local file, zarrified first; --files-below lets the archive read it
 pixi run demo "--check"                               # no window: zarrify, read a block, and wait for one volatile voxel
-pixi run demo "--preview docs/preview.png"            # no window: composite the middle plane of every channel into a PNG
+pixi run demo "--preview out.png"                     # no window: composite the middle plane of every channel into a PNG
+pixi run demo "--screenshot out.png --wait 45"        # open the viewer, wait 45 s for blocks to load, save what it shows, exit
 ```
+
+Relative paths are relative to the repository root.
 
 What happens on the default image: zarrify reads about 250 KB of the file, in 12 requests and about 4 seconds, and writes an
 archive of 18.5 KB. The archive's metadata gives BigDataViewer the voxel size (0.205 x 0.205 x 0.35 micrometers) and three
@@ -149,16 +152,18 @@ named, coloured, windowed channels (TagYFP, mRFP1.2, TL DIC). Pixels are read on
 that server gave about 250 KB/s, so a plane takes a few seconds to appear; to browse faster, download the file and zarrify
 the local copy. Only the full resolution is shown, so a large image is slow to move through.
 
-![The middle plane of the three channels, composited by `--preview`: yeast cells in transmitted light, with two fluorescent cells in orange](docs/preview.png)
+![BigDataViewer showing the demo image: yeast cells in transmitted light, with two fluorescent cells in orange](docs/bdv-window.png)
 
-*The middle plane of the three channels, as `--preview` composites them (image: IDR idr0011, CC BY 4.0). This is the demo's own
-rendering of the pixels read through the archive, not BigDataViewer's.*
+*BigDataViewer's own display (`--screenshot`), reading the 44 MB CZI through the 18.5 KB archive: the three channels are coloured and
+windowed from the file's metadata, and the cursor readout is in micrometers. Image: IDR idr0011, CC BY 4.0.*
 
 Status, so you know what was run:
 
-- **The window has not been opened by the author's tooling**, which had no display. `--check` runs everything the window
-  does except the call that opens it, including BigDataViewer's own volatile loading, and it passes; `--preview` shows the
-  pixels are right. If the window misbehaves, that is the part to look at.
+- **The window was run, once, on macOS (Apple silicon).** Not from a plain terminal session: macOS lets only a process in
+  the desktop session open a window, so it was started by opening a `.command` file with Terminal. The run zarrified the default
+  image, opened BigDataViewer, waited for the blocks, and saved the screenshot above. Interaction (panning, z-scrolling, the
+  channel sliders, loading speed on a slow link) was not tried, and nothing was run on Linux or Windows. `--check` runs the
+  loading without a window and needs no display; `--preview` is a software composite of the pixels, also without one.
 - **Only some images show.** N5 reads raw, transposed and gzip chunks of the common integer and float types, which is about half
   of the arrays in refkv's own test fixtures. JPEG, JPEG 2000 and JPEG XR tiles (the JPEG XR CZI pyramid, NDPI, VSI, QPTIFF
   and the compressed TIFFs among the demo site's examples), PackBits, and half floats are not decoded; the demo says so and
