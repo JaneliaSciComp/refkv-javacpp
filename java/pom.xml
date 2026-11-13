@@ -27,7 +27,9 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <javacpp.version>1.5.14</javacpp.version>
     <n5.version>4.0.2</n5.version>
+    <!-- 2.0.2 is the release. Rectilinear chunk grids need the fork branch: mvn -Dn5-zarr.version=2.0.2-rectilinear.1 (see README) -->
     <n5-zarr.version>2.0.2</n5-zarr.version>
+    <ffmpeg.version>8.1.2-1.5.14</ffmpeg.version>
     <!-- where `pixi run capi` puts the header and the shared library -->
     <refkv.capi.include>${project.basedir}/../capi/include</refkv.capi.include>
     <refkv.capi.lib>${project.basedir}/../capi/target/release</refkv.capi.lib>
@@ -57,6 +59,21 @@
       <version>${n5-zarr.version}</version>
       <scope>test</scope>
     </dependency>
+    <!-- the refkv.stream codec decodes H.264 and other coded streams with FFmpeg. It is optional: classes that use it load only
+         when a chunk of such a stream is read. The natives are for this build's own tests; an application brings its platform's -->
+    <dependency>
+      <groupId>org.bytedeco</groupId>
+      <artifactId>ffmpeg</artifactId>
+      <version>${ffmpeg.version}</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>org.bytedeco</groupId>
+      <artifactId>ffmpeg</artifactId>
+      <version>${ffmpeg.version}</version>
+      <classifier>${ffmpeg.native}</classifier>
+      <scope>test</scope>
+    </dependency>
     <!-- n5-blosc's jblosc brings JNA 4.2.2, whose macOS native stub is x86 only and cannot start on Apple Silicon -->
     <dependency>
       <groupId>net.java.dev.jna</groupId>
@@ -71,6 +88,30 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <profiles>
+    <!-- the FFmpeg natives of the platform the tests run on -->
+    <profile>
+      <id>ffmpeg-macosx-arm64</id>
+      <activation><os><family>mac</family><arch>aarch64</arch></os></activation>
+      <properties><ffmpeg.native>macosx-arm64</ffmpeg.native></properties>
+    </profile>
+    <profile>
+      <id>ffmpeg-macosx-x86_64</id>
+      <activation><os><family>mac</family><arch>x86_64</arch></os></activation>
+      <properties><ffmpeg.native>macosx-x86_64</ffmpeg.native></properties>
+    </profile>
+    <profile>
+      <id>ffmpeg-windows-x86_64</id>
+      <activation><os><family>windows</family></os></activation>
+      <properties><ffmpeg.native>windows-x86_64</ffmpeg.native></properties>
+    </profile>
+    <profile>
+      <id>ffmpeg-linux-x86_64</id>
+      <activation><os><family>unix</family><name>Linux</name></os></activation>
+      <properties><ffmpeg.native>linux-x86_64</ffmpeg.native></properties>
+    </profile>
+  </profiles>
 
   <build>
     <plugins>
